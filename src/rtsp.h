@@ -50,6 +50,7 @@ namespace rtsp_stream {
     bool enable_sops;
     bool virtual_display;
     uint32_t scale_factor;
+    double desktop_scale {0.0};
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;
     std::string rtsp_url_scheme;

@@ -34,6 +34,7 @@
 #include "rtsp.h"
 #include "stream.h"
 #include "stream_desk.h"
+#include "stream_desk_display.h"
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
@@ -462,6 +463,7 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     launch_session->scale_factor = util::from_view(get_arg(args, "scaleFactor", "100"));
+    launch_session->desktop_scale = stream_desk::parse_desktop_scale(get_arg(args, "desktopScale", ""), launch_session->scale_factor);
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
     launch_session->client_undo_cmds = named_cert_p->undo_cmds;
@@ -920,6 +922,13 @@ namespace nvhttp {
     }
     if (platf::clipboard_event_available()) {
       stream_desk_caps |= 0x04U;
+    }
+    const auto display_caps = stream_desk::display_manager().probe();
+    if (display_caps.adaptive_display) {
+      stream_desk_caps |= 0x08U;
+    }
+    if (display_caps.virtual_display) {
+      stream_desk_caps |= 0x10U;
     }
     tree.put("root.StreamDeskCaps", stream_desk_caps);
     tree.put("root.GfeVersion", GFE_VERSION);

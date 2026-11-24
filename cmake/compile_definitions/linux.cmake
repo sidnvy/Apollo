@@ -243,6 +243,7 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/mic_pulse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/commit_text_fcitx.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/display_helper.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/EGL/eglplatform.h"

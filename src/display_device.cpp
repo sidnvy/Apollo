@@ -19,6 +19,7 @@
 #include "audio.h"
 #include "platform/common.h"
 #include "rtsp.h"
+#include "stream_desk_display.h"
 
 // platform-specific includes
 #ifdef _WIN32
@@ -644,7 +645,7 @@ namespace display_device {
      */
     void revert_configuration_unlocked(const revert_option_e option) {
       if (!DD_DATA.sm_instance) {
-        // Platform is not supported, nothing to do.
+        std::ignore = stream_desk::display_manager().revert();
         return;
       }
 
@@ -781,6 +782,24 @@ namespace display_device {
   }
 
   void configure_display(const config::video_t &video_config, const rtsp_stream::launch_session_t &session) {
+    bool has_sm = false;
+    {
+      std::lock_guard lock {DD_DATA.mutex};
+      has_sm = static_cast<bool>(DD_DATA.sm_instance);
+    }
+
+    if (!has_sm) {
+      stream_desk::session_display_request_t req;
+      req.session_id = session.id;
+      req.width = session.width;
+      req.height = session.height;
+      req.fps = stream_desk::normalize_session_fps(session.fps);
+      req.desktop_scale = session.desktop_scale;
+      req.virtual_display = session.virtual_display;
+      std::ignore = stream_desk::display_manager().configure(req);
+      return;
+    }
+
     const auto result { parse_configuration(video_config, session) };
     if (const auto *parsed_config { std::get_if<SingleDisplayConfiguration>(&result) }; parsed_config) {
       configure_display(*parsed_config);
