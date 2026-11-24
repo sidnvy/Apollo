@@ -8,7 +8,16 @@
 // standard includes
 #include <stdint.h>
 
-typedef struct _reed_solomon reed_solomon;
+#ifndef __RS_H_
+#define DATA_SHARDS_MAX 255
+
+typedef struct _reed_solomon {
+  int ds;
+  int ps;
+  int ts;
+  uint8_t p[];
+} reed_solomon;
+#endif
 
 typedef reed_solomon *(*reed_solomon_new_t)(int data_shards, int parity_shards);
 typedef void (*reed_solomon_release_t)(reed_solomon *rs);

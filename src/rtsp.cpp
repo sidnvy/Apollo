@@ -4,18 +4,19 @@
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
-extern "C" {
-#include <moonlight-common-c/src/Limelight-internal.h>
-#include <moonlight-common-c/src/Rtsp.h>
-}
-
 // standard includes
 #include <array>
 #include <cctype>
 #include <format>
 #include <set>
+#include <stdatomic.h>
 #include <unordered_map>
 #include <utility>
+
+extern "C" {
+#include <moonlight-common-c/src/Limelight-internal.h>
+#include <moonlight-common-c/src/Rtsp.h>
+}
 
 // lib includes
 #include <boost/asio.hpp>

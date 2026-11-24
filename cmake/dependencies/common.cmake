@@ -26,13 +26,14 @@ pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(MINIUPNP miniupnpc REQUIRED)
 include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
 
+if(WIN32)
+    set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl)
+elseif(UNIX AND NOT APPLE)
+    set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
+endif()
+
 # ffmpeg pre-compiled binaries
 if(NOT DEFINED FFMPEG_PREPARED_BINARIES)
-    if(WIN32)
-        set(FFMPEG_PLATFORM_LIBRARIES mfplat ole32 strmiids mfuuid vpl)
-    elseif(UNIX AND NOT APPLE)
-        set(FFMPEG_PLATFORM_LIBRARIES numa va va-drm va-x11 X11)
-    endif()
     set(FFMPEG_PREPARED_BINARIES
             "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 
@@ -64,8 +65,14 @@ else()
         "${FFMPEG_PREPARED_BINARIES}/lib/libavcodec.a"
         "${FFMPEG_PREPARED_BINARIES}/lib/libswscale.a"
         "${FFMPEG_PREPARED_BINARIES}/lib/libavutil.a"
-        "${FFMPEG_PREPARED_BINARIES}/lib/libcbs.a"
-        ${FFMPEG_PLATFORM_LIBRARIES})
+        "${FFMPEG_PREPARED_BINARIES}/lib/libcbs.a")
+    foreach(codec_lib SvtAv1Enc x264 x265 hdr10plus dav1d swresample)
+        if(EXISTS "${FFMPEG_PREPARED_BINARIES}/lib/lib${codec_lib}.a")
+            list(APPEND FFMPEG_LIBRARIES
+                "${FFMPEG_PREPARED_BINARIES}/lib/lib${codec_lib}.a")
+        endif()
+    endforeach()
+    list(APPEND FFMPEG_LIBRARIES ${FFMPEG_PLATFORM_LIBRARIES})
 endif()
 
 set(FFMPEG_INCLUDE_DIRS

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <future>
 #include <queue>
+#include <stdatomic.h>
 
 // lib includes
 #include <boost/endian/arithmetic.hpp>

@@ -5,7 +5,11 @@
 
 #include "../tests_common.h"
 
+#include <filesystem>
+#include <src/config.h>
+#include <src/httpcommon.h>
 #include <src/nvhttp.h>
+#include <src/uuid.h>
 
 using namespace nvhttp;
 
@@ -82,6 +86,11 @@ TEST_P(PairingTest, Run) {
   auto [input, expected] = GetParam();
 
   boost::property_tree::ptree tree;
+  config::sunshine.flags[config::flag::FRESH_STATE] = true;
+  http::unique_id = uuid_util::uuid_t::generate().string();
+  config::nvhttp.file_state = (std::filesystem::temp_directory_path() / "apollo_test_pairing_state.json").string();
+  std::filesystem::remove(config::nvhttp.file_state);
+  erase_all_clients();
 
   setup(PRIVATE_KEY, PUBLIC_CERT);
 
@@ -108,24 +117,17 @@ TEST_P(PairingTest, Run) {
   input.session->serverchallenge = input.override_server_challenge;
 
   // phase 4
-  auto input_client_cert = input.session->client.cert;  // Will be moved
-  auto add_cert = std::make_shared<safe::queue_t<crypto::x509_t>>(30);
-  clientpairingsecret(*input.session, add_cert, tree, input.client_pairing_secret);
+  clientpairingsecret(*input.session, tree, input.client_pairing_secret);
   ASSERT_EQ(tree.get<int>("root.paired") == 1, expected.phase_4_success);
 
-  // Check that we actually added the input client certificate to `add_cert`
+  // Check that we actually added the input client certificate to authorized clients
   if (expected.phase_4_success) {
-    ASSERT_EQ(add_cert->peek(), true);
-    auto cert = add_cert->pop();
-    char added_subject_name[256];
-    X509_NAME_oneline(X509_get_subject_name(cert.get()), added_subject_name, sizeof(added_subject_name));
-
-    auto input_cert = crypto::x509(input_client_cert);
-    char original_suject_name[256];
-    X509_NAME_oneline(X509_get_subject_name(input_cert.get()), original_suject_name, sizeof(original_suject_name));
-
-    ASSERT_EQ(std::string(added_subject_name), std::string(original_suject_name));
+    auto clients = get_all_clients();
+    ASSERT_EQ(clients.size(), 1u);
+    ASSERT_EQ(clients[0]["name"].get<std::string>(), "test");
   }
+  erase_all_clients();
+  std::filesystem::remove(config::nvhttp.file_state);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -241,6 +243,11 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(PairingTest, OutOfOrderCalls) {
   boost::property_tree::ptree tree;
+  config::sunshine.flags[config::flag::FRESH_STATE] = true;
+  http::unique_id = uuid_util::uuid_t::generate().string();
+  config::nvhttp.file_state = (std::filesystem::temp_directory_path() / "apollo_test_pairing_state.json").string();
+  std::filesystem::remove(config::nvhttp.file_state);
+  erase_all_clients();
 
   setup(PRIVATE_KEY, PUBLIC_CERT);
 
@@ -252,8 +259,7 @@ TEST(PairingTest, OutOfOrderCalls) {
   serverchallengeresp(sess, tree, "test");
   ASSERT_FALSE(tree.get<int>("root.paired") == 1);
 
-  auto add_cert = std::make_shared<safe::queue_t<crypto::x509_t>>(30);
-  clientpairingsecret(sess, add_cert, tree, "test");
+  clientpairingsecret(sess, tree, "test");
   ASSERT_FALSE(tree.get<int>("root.paired") == 1);
 
   // This should work, it's the first time we call it
