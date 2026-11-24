@@ -20,7 +20,9 @@ endif()
 list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${APP_KIT_LIBRARY}
         ${APP_SERVICES_LIBRARY}
+        ${AUDIO_TOOLBOX_LIBRARY}
         ${AV_FOUNDATION_LIBRARY}
+        ${CORE_AUDIO_LIBRARY}
         ${CORE_MEDIA_LIBRARY}
         ${CORE_VIDEO_LIBRARY}
         ${FOUNDATION_LIBRARY}
@@ -34,14 +36,18 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_img_t.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_video.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/av_video.m"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/clipboard_macos.mm"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/commit_text_macos.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/display.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/mic_coreaudio.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/microphone.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/nv12_zero_device.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/nv12_zero_device.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/publish.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/display_helper.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.c"
         "${CMAKE_SOURCE_DIR}/third-party/TPCircularBuffer/TPCircularBuffer.h"
         ${APPLE_PLIST_FILE})

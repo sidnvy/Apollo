@@ -21,6 +21,7 @@
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/stream_desk.h"
 
 #ifdef __MINGW32__
 // DECLARE_HANDLE(HSYNTHETICPOINTERDEVICE);
@@ -1775,6 +1776,16 @@ namespace platf {
       }
     } else {
       BOOST_LOG(warning) << "Touch input requires Windows 10 1809 or later"sv;
+    }
+
+    if (platf::mic_available()) {
+      caps |= platform_caps::mic_input;
+    }
+    if (platf::commit_text_available()) {
+      caps |= platform_caps::commit_text;
+    }
+    if (platf::clipboard_event_available()) {
+      caps |= platform_caps::clipboard_event;
     }
 
     return caps;

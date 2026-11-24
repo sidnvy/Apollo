@@ -130,7 +130,7 @@ namespace stream_desk {
 
 }  // namespace stream_desk
 
-#if !defined(__linux__)
+#if !defined(__linux__) && !defined(__APPLE__)
 namespace platf {
   std::unique_ptr<stream_desk::display_backend_t> create_display_helper_backend() {
     return nullptr;

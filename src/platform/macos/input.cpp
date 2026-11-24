@@ -18,6 +18,7 @@
 #include "src/input.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/stream_desk.h"
 #include "src/utility.h"
 
 /**
@@ -295,7 +296,9 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void unicode(input_t &input, char *utf8, int size) {
-    BOOST_LOG(info) << "unicode: Unicode input not yet implemented for MacOS."sv;
+    if (utf8 != nullptr && size > 0) {
+      platf::commit_text(std::string(utf8, static_cast<std::size_t>(size)));
+    }
   }
 
   int alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
@@ -590,6 +593,18 @@ const KeyCodeMap kKeyCodesMap[] = {
    * @return Capability flags.
    */
   platform_caps::caps_t get_capabilities() {
-    return 0;
+    platform_caps::caps_t caps = 0;
+
+    if (platf::mic_available()) {
+      caps |= platform_caps::mic_input;
+    }
+    if (platf::commit_text_available()) {
+      caps |= platform_caps::commit_text;
+    }
+    if (platf::clipboard_event_available()) {
+      caps |= platform_caps::clipboard_event;
+    }
+
+    return caps;
   }
 }  // namespace platf

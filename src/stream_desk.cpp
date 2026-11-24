@@ -156,7 +156,7 @@ namespace stream_desk {
 
 }  // namespace stream_desk
 
-#if !defined(__linux__)
+#if !defined(__linux__) && !defined(_WIN32) && !defined(__APPLE__)
 namespace platf {
   bool commit_text_available() {
     return false;

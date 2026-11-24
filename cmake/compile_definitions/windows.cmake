@@ -59,6 +59,9 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_ram.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_wgc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/clipboard_win.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/commit_text_win.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_wasapi.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_display.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_display.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/utils.h"
@@ -90,10 +93,12 @@ list(PREPEND PLATFORM_LIBRARIES
         libwinpthread.a
         minhook::minhook
         ntdll
+        ole32
         setupapi
         shlwapi
         synchronization.lib
         userenv
+        uuid
         ws2_32
         wsock32
 )

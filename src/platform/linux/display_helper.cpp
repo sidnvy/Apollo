@@ -29,6 +29,20 @@ namespace {
     return std::string(env);
   }
 
+  bool create_cloexec_pipe(int fds[2]) {
+    if (::pipe(fds) != 0) {
+      return false;
+    }
+    if (::fcntl(fds[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(fds[0]);
+      ::close(fds[1]);
+      fds[0] = fds[1] = -1;
+      return false;
+    }
+    return true;
+  }
+
   bool invoke_helper_json(const std::string &path,
                           const nlohmann::json &request,
                           nlohmann::json &response,
@@ -39,10 +53,10 @@ namespace {
 
     int in_pipe[2] {-1, -1};
     int out_pipe[2] {-1, -1};
-    if (::pipe2(in_pipe, O_CLOEXEC) != 0) {
+    if (!create_cloexec_pipe(in_pipe)) {
       return false;
     }
-    if (::pipe2(out_pipe, O_CLOEXEC) != 0) {
+    if (!create_cloexec_pipe(out_pipe)) {
       ::close(in_pipe[0]);
       ::close(in_pipe[1]);
       return false;

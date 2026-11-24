@@ -134,7 +134,7 @@ namespace mic {
 
 }  // namespace mic
 
-#if !defined(__linux__)
+#if !defined(__linux__) && !defined(_WIN32) && !defined(__APPLE__)
 namespace platf {
   bool mic_available() {
     return false;
