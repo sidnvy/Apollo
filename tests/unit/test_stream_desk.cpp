@@ -7,13 +7,16 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
-#include <poll.h>
 #include <string>
+#include <thread>
+#include <vector>
+
+#ifdef __linux__
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <thread>
 #include <unistd.h>
-#include <vector>
+#endif
 
 extern "C" {
 #include <moonlight-common-c/src/Limelight.h>

@@ -10,11 +10,14 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <vector>
+
+#ifdef __linux__
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <thread>
 #include <unistd.h>
-#include <vector>
+#endif
 
 #include "src/stream_desk_display.h"
 

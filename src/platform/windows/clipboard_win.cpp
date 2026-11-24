@@ -36,10 +36,11 @@ namespace {
     if (utf8_len <= 1) {
       return {};
     }
-    std::string out(static_cast<std::size_t>(utf8_len - 1), '\0');
-    if (WideCharToMultiByte(CP_UTF8, 0, src, -1, out.data(), utf8_len - 1, nullptr, nullptr) <= 0) {
+    std::string out(static_cast<std::size_t>(utf8_len), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, src, -1, out.data(), utf8_len, nullptr, nullptr) <= 0) {
       return {};
     }
+    out.pop_back();
     return out;
   }
 
