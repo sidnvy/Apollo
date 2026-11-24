@@ -903,6 +903,18 @@ namespace nvhttp {
     tree.put("root.hostname", config::nvhttp.sunshine_name);
 
     tree.put("root.appversion", VERSION);
+#if defined(_WIN32)
+    tree.put("root.HostOS", "windows");
+#elif defined(__APPLE__)
+    tree.put("root.HostOS", "macos");
+#else
+    tree.put("root.HostOS", "linux");
+#endif
+    std::uint32_t stream_desk_caps = 0;
+    if (platf::mic_available()) {
+      stream_desk_caps |= 0x01U;
+    }
+    tree.put("root.StreamDeskCaps", stream_desk_caps);
     tree.put("root.GfeVersion", GFE_VERSION);
     tree.put("root.uniqueid", http::unique_id);
     tree.put("root.HttpsPort", net::map_port(PORT_HTTPS));

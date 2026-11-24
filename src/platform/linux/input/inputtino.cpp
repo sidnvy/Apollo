@@ -119,6 +119,10 @@ namespace platf {
       caps |= platform_caps::controller_touch;
     }
 
+    if (platf::mic_available()) {
+      caps |= platform_caps::mic_input;
+    }
+
     return caps;
   }
 

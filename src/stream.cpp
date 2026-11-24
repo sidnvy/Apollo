@@ -16,6 +16,7 @@
 extern "C" {
   // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
+#include <moonlight-common-c/src/Mic.h>
 #include "rswrapper.h"
   // clang-format on
 }
@@ -27,6 +28,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
+#include "mic.h"
 #include "network.h"
 #include "platform/common.h"
 #include "process.h"
@@ -422,6 +424,9 @@ namespace stream {
 
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::signal_t controlEnd;
+
+    std::unique_ptr<mic::receiver_t> mic_receiver;
+    bool mic_init_failed {false};
 
     std::atomic<session::state_e> state;
   };
@@ -1053,6 +1058,24 @@ namespace stream {
       }
     });
 
+    server->map(SS_MIC_OPUS_PTYPE, [](session_t *session, const std::string_view &payload) {
+      if (!(session->permission & crypto::PERM::_allow_view)) {
+        return;
+      }
+      if (!session->mic_receiver) {
+        if (session->mic_init_failed) {
+          return;
+        }
+        auto sink = platf::create_mic_sink();
+        if (!sink) {
+          session->mic_init_failed = true;
+          return;
+        }
+        session->mic_receiver = std::make_unique<mic::receiver_t>(std::move(sink));
+      }
+      session->mic_receiver->process_packet(payload);
+    });
+
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_ENCRYPTED]"sv;
 
@@ -1151,6 +1174,7 @@ namespace stream {
 
           if (session->state.load(std::memory_order_acquire) == session::state_e::STOPPING) {
             pos = server->_sessions->erase(pos);
+            session->mic_receiver.reset();
 
             if (session->control.peer) {
               {
@@ -2044,6 +2068,7 @@ namespace stream {
       session.audioThread.join();
       BOOST_LOG(debug) << "Waiting for control to end..."sv;
       session.controlEnd.view();
+      session.mic_receiver.reset();
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
       input::reset(session.input);

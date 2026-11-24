@@ -280,6 +280,7 @@ namespace platf {
 
     constexpr caps_t pen_touch = 0x01;  // Pen and touch events
     constexpr caps_t controller_touch = 0x02;  // Controller touch events
+    constexpr caps_t mic_input = 0x0100;  // Reverse microphone uplink
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -878,4 +879,14 @@ namespace platf {
   bool
   set_clipboard(const std::string& content);
 
+  bool mic_available();
+
+}  // namespace platf
+
+namespace mic {
+  class sink_t;
+}
+
+namespace platf {
+  std::unique_ptr<mic::sink_t> create_mic_sink();
 }  // namespace platf
