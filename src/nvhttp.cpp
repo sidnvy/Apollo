@@ -628,8 +628,8 @@ namespace nvhttp {
       }
       named_cert_p->cert = std::move(client.cert);
       named_cert_p->uuid = uuid_util::uuid_t::generate().string();
-      // If the device is the first one paired with the server, assign full permission.
-      if (client_root.named_devices.empty()) {
+      // Assign full permission when this is the first paired device or full default access is enabled.
+      if (client_root.named_devices.empty() || config::nvhttp.default_all_permissions) {
         named_cert_p->perm = PERM::_all;
       } else {
         named_cert_p->perm = PERM::_default;

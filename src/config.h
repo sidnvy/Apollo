@@ -189,6 +189,8 @@ namespace config {
     std::string file_state;
 
     std::string external_ip;
+
+    bool default_all_permissions;
   };
 
   struct input_t {

@@ -547,6 +547,7 @@ namespace config {
     platf::get_host_name(),  // sunshine_name,
     "sunshine_state.json"s,  // file_state
     {},  // external_ip
+    true,  // default_all_permissions
   };
 
   input_t input {
@@ -1221,6 +1222,7 @@ namespace config {
     path_f(vars, "credentials_file", config::sunshine.credentials_file);
 
     string_f(vars, "external_ip", nvhttp.external_ip);
+    bool_f(vars, "default_all_permissions", nvhttp.default_all_permissions);
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
     list_prep_cmd_f(vars, "global_state_cmd", config::sunshine.state_cmds);
     list_server_cmd_f(vars, "server_cmd", config::sunshine.server_cmds);
