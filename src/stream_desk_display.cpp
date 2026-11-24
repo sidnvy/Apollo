@@ -4,9 +4,7 @@
  */
 #include "stream_desk_display.h"
 
-#include <charconv>
 #include <cmath>
-#include <system_error>
 
 #include "src/logging.h"
 
@@ -14,11 +12,35 @@ namespace stream_desk {
 
   double parse_desktop_scale(std::string_view desktop_scale_arg, std::uint32_t legacy_scale_factor) {
     if (!desktop_scale_arg.empty()) {
-      double value = 0.0;
-      const char *begin = desktop_scale_arg.data();
-      const char *end = begin + desktop_scale_arg.size();
-      auto [ptr, ec] = std::from_chars(begin, end, value);
-      if (ec == std::errc {} && ptr == end && std::isfinite(value)) {
+      bool seen_dot = false;
+      bool seen_digit = false;
+      double int_part = 0.0;
+      double frac_part = 0.0;
+      double frac_scale = 0.1;
+      bool valid = true;
+      for (char ch : desktop_scale_arg) {
+        if (ch >= '0' && ch <= '9') {
+          seen_digit = true;
+          const int digit = ch - '0';
+          if (!seen_dot) {
+            int_part = (int_part * 10.0) + static_cast<double>(digit);
+          } else {
+            frac_part += static_cast<double>(digit) * frac_scale;
+            frac_scale *= 0.1;
+          }
+          if (int_part > 10.0) {
+            valid = false;
+            break;
+          }
+        } else if (ch == '.' && !seen_dot) {
+          seen_dot = true;
+        } else {
+          valid = false;
+          break;
+        }
+      }
+      const double value = int_part + frac_part;
+      if (valid && seen_digit && std::isfinite(value)) {
         if (value == 0.0) {
           return 0.0;
         }
