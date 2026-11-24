@@ -60,9 +60,18 @@ namespace wl {
         }
       }
 
-      monitor->listen(interface.output_manager);
+      ::wl::env_width = 0;
+      ::wl::env_height = 0;
+      for (auto &m : interface.monitors) {
+        m->listen(interface.output_manager);
+      }
 
       display.roundtrip();
+
+      for (auto &m : interface.monitors) {
+        ::wl::env_width = std::max(::wl::env_width, (int) (m->viewport.offset_x + m->viewport.width));
+        ::wl::env_height = std::max(::wl::env_height, (int) (m->viewport.offset_y + m->viewport.height));
+      }
 
       output = monitor->output;
 
