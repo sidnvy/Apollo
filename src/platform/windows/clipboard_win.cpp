@@ -17,6 +17,7 @@
 
 extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
+#include <moonlight-common-c/src/StreamDesk.h>
 }
 
 #include "src/logging.h"

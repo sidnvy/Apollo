@@ -144,8 +144,11 @@ include_directories(
         "${CMAKE_SOURCE_DIR}/third-party/nanors"
         "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
         ${FFMPEG_INCLUDE_DIRS}
-        ${Boost_INCLUDE_DIRS}  # has to be the last, or we get runtime error on macOS ffmpeg encoder
 )
+
+# Must be appended after FFMPEG_INCLUDE_DIRS because Homebrew's /opt/homebrew/include may
+# contain a newer system FFmpeg whose headers shadow build-deps on macOS.
+include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
 list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${MINIUPNP_LIBRARIES}
