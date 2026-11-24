@@ -76,8 +76,10 @@ namespace {
         }
       case PA_CONTEXT_FAILED:
       case PA_CONTEXT_TERMINATED:
-        state->ok = false;
-        state->done = true;
+        if (!state->done) {
+          state->ok = false;
+          state->done = true;
+        }
         pa_mainloop_quit(state->ml, 1);
         break;
       default:
@@ -217,10 +219,12 @@ namespace platf {
       }
     }
 
+    const bool available = state.ok;
+    pa_context_set_state_callback(ctx, nullptr, nullptr);
     pa_context_disconnect(ctx);
     pa_context_unref(ctx);
     pa_mainloop_free(state.ml);
-    return state.ok;
+    return available;
   }
 
   std::unique_ptr<mic::sink_t> create_mic_sink() {
