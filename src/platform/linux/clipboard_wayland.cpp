@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -147,10 +149,21 @@ namespace {
         }
         break;
       }
+      if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        break;
+      }
       ssize_t n = ::write(fd, text.data() + off, text.size() - off);
       if (n < 0) {
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
           continue;
+        }
+        if (errno == EPIPE) {
+          // Drain any thread-directed SIGPIPE while blocked so paste-pipe aborts never kill Apollo
+          sigset_t sp;
+          sigemptyset(&sp);
+          sigaddset(&sp, SIGPIPE);
+          struct timespec z {0, 0};
+          ::sigtimedwait(&sp, nullptr, &z);
         }
         break;
       }
@@ -205,8 +218,10 @@ namespace {
 
   private:
     struct offer_info_t {
+      wayland_clipboard_watcher_t *self {nullptr};
       std::string best_mime;
       int best_priority {0};
+      bool is_self {false};
     };
 
     struct source_ctx_t {
@@ -251,6 +266,10 @@ namespace {
       if (info == nullptr || mime_type == nullptr) {
         return;
       }
+      if (info->self != nullptr && std::strcmp(mime_type, info->self->self_mime_.c_str()) == 0) {
+        info->is_self = true;
+        return;
+      }
       int prio = mime_priority(mime_type);
       if (prio > info->best_priority) {
         info->best_priority = prio;
@@ -266,6 +285,7 @@ namespace {
         .offer = on_offer_mime,
       };
       auto info = std::make_unique<offer_info_t>();
+      info->self = self;
       ext_data_control_offer_v1_add_listener(offer, &kOfferListener, info.get());
       self->pending_offers_.emplace(offer, std::move(info));
     }
@@ -283,6 +303,11 @@ namespace {
       if (it != self->pending_offers_.end()) {
         info = std::move(it->second);
         self->pending_offers_.erase(it);
+      }
+
+      if (info && info->is_self) {
+        ext_data_control_offer_v1_destroy(offer);
+        return;
       }
 
       if (info && !info->best_mime.empty() && self->display_ != nullptr) {
@@ -378,12 +403,18 @@ namespace {
       ext_data_control_source_v1_offer(source, "text/plain;charset=utf-8");
       ext_data_control_source_v1_offer(source, "UTF8_STRING");
       ext_data_control_source_v1_offer(source, "text/plain");
+      ext_data_control_source_v1_offer(source, self_mime_.c_str());
       ext_data_control_device_v1_set_selection(device_, source);
       active_sources_.emplace(source, std::move(ctx));
       wl_display_flush(display_);
     }
 
     void run() {
+      sigset_t pipe_mask;
+      sigemptyset(&pipe_mask);
+      sigaddset(&pipe_mask, SIGPIPE);
+      pthread_sigmask(SIG_BLOCK, &pipe_mask, nullptr);
+
       const char *disp_env = std::getenv("WAYLAND_DISPLAY");
       if (disp_env == nullptr || disp_env[0] == '\0') {
         return;
@@ -512,6 +543,7 @@ namespace {
     ext_data_control_device_v1 *device_ {nullptr};
 
     stream_desk::clipboard_dedup_t dedup_;
+    std::string self_mime_ {"application/x-stream-desk-owner-" + std::to_string(static_cast<unsigned long>(::getpid())) + "-" + std::to_string(reinterpret_cast<std::uintptr_t>(this))};
     std::mutex out_mutex_;
     std::deque<std::string> pending_selections_;
     std::unordered_map<ext_data_control_offer_v1 *, std::unique_ptr<offer_info_t>> pending_offers_;
