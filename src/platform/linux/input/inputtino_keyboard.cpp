@@ -13,6 +13,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/stream_desk.h"
 #include "src/utility.h"
 
 using namespace std::literals;
@@ -159,6 +160,9 @@ namespace platf::keyboard {
   }
 
   void unicode(input_raw_t *raw, char *utf8, int size) {
+    if (size > 0 && platf::commit_text(std::string(utf8, static_cast<std::size_t>(size)))) {
+      return;
+    }
     if (raw->keyboard) {
       /* Reading input text as UTF-8 */
       auto utf8_str = boost::locale::conv::to_utf<wchar_t>(utf8, utf8 + size, "UTF-8");

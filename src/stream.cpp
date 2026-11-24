@@ -4,8 +4,10 @@
  */
 
 // standard includes
+#include <deque>
 #include <fstream>
 #include <future>
+#include <mutex>
 #include <queue>
 #include <stdatomic.h>
 
@@ -17,6 +19,7 @@ extern "C" {
   // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
 #include <moonlight-common-c/src/Mic.h>
+#include <moonlight-common-c/src/StreamDesk.h>
 #include "rswrapper.h"
   // clang-format on
 }
@@ -33,6 +36,7 @@ extern "C" {
 #include "platform/common.h"
 #include "process.h"
 #include "stream.h"
+#include "stream_desk.h"
 #include "sync.h"
 #include "system_tray.h"
 #include "thread_safe.h"
@@ -427,6 +431,12 @@ namespace stream {
 
     std::unique_ptr<mic::receiver_t> mic_receiver;
     bool mic_init_failed {false};
+
+    stream_desk::text_reassembler_t commit_text_reassembler;
+    stream_desk::clipboard_reassembler_t clipboard_reassembler {SS_CLIPBOARD_ORIGIN_CLIENT};
+    std::mutex outgoing_clipboard_mutex;
+    std::deque<stream_desk::clipboard_message_t> outgoing_clipboard;
+    std::uint32_t outgoing_clipboard_event_id {0};
 
     std::atomic<session::state_e> state;
   };
@@ -933,7 +943,81 @@ namespace stream {
     return 0;
   }
 
+  std::size_t select_utf8_chunk_len(const std::string &text, std::size_t offset) {
+    std::size_t rem = text.size() - offset;
+    std::size_t max_len = std::min<std::size_t>(rem, SS_STREAM_DESK_MAX_CHUNK_BYTES);
+    if (max_len < rem) {
+      std::size_t split = max_len;
+      while (split > 0 && (static_cast<std::uint8_t>(text[offset + split]) & 0xC0u) == 0x80u) {
+        --split;
+      }
+      if (split > 0) {
+        max_len = split;
+      }
+    }
+    return max_len;
+  }
+
+  int send_clipboard_message(session_t *session, const stream_desk::clipboard_message_t &msg) {
+    if (!session->control.peer || msg.text.empty() || msg.text.size() > LI_STREAM_DESK_MAX_TEXT_BYTES) {
+      return -1;
+    }
+
+    const std::uint32_t event_id = ++session->outgoing_clipboard_event_id;
+    std::size_t offset = 0;
+    while (offset < msg.text.size()) {
+      const std::size_t chunk_len = select_utf8_chunk_len(msg.text, offset);
+      std::uint8_t chunk_flags = static_cast<std::uint8_t>(msg.flags & SS_CLIPBOARD_FLAG_SENSITIVE);
+      if (offset + chunk_len == msg.text.size()) {
+        chunk_flags |= SS_CLIPBOARD_FLAG_FINAL;
+      }
+
+      const std::uint16_t v2_payload_len = static_cast<std::uint16_t>(SS_CLIPBOARD_EVENT_HEADER_SIZE + chunk_len);
+      std::vector<std::uint8_t> plain(sizeof(control_header_v2) + v2_payload_len);
+      auto *hdr = reinterpret_cast<control_header_v2 *>(plain.data());
+      hdr->type = SS_CLIPBOARD_EVENT_PTYPE;
+      hdr->payloadLength = v2_payload_len;
+
+      if (LiPackClipboardEventFrame(event_id,
+                                    msg.content_hash,
+                                    SS_CLIPBOARD_ORIGIN_HOST,
+                                    chunk_flags,
+                                    msg.text.data() + offset,
+                                    static_cast<std::uint16_t>(chunk_len),
+                                    plain.data() + sizeof(control_header_v2),
+                                    v2_payload_len) < 0) {
+        return -1;
+      }
+
+      std::array<std::uint8_t, sizeof(control_encrypted_t) + sizeof(control_header_v2) + SS_CLIPBOARD_EVENT_HEADER_SIZE + SS_STREAM_DESK_MAX_CHUNK_BYTES + crypto::cipher::tag_size + 16> encrypted_payload;
+      auto payload = encode_control(session, std::string_view {reinterpret_cast<const char *>(plain.data()), plain.size()}, encrypted_payload);
+      if (payload.empty() || session->broadcast_ref->control_server.send(payload, session->control.peer)) {
+        return -1;
+      }
+
+      offset += chunk_len;
+    }
+
+    return 0;
+  }
+
   void controlBroadcastThread(control_server_t *server) {
+    std::unique_ptr<platf::clipboard_watcher_t> clipboard_watcher = platf::create_clipboard_watcher(
+      [server](const std::string &utf8, std::uint64_t content_hash, std::uint8_t flags) {
+        auto lg = server->_sessions.lock();
+        for (auto *session : *server->_sessions) {
+          if (session->state.load(std::memory_order_acquire) == session::state_e::RUNNING &&
+              session->control.peer &&
+              (session->config.mlFeatureFlags & ML_FF_CLIPBOARD_EVENT) &&
+              !!(session->permission & crypto::PERM::clipboard_read)) {
+            std::lock_guard<std::mutex> qlg(session->outgoing_clipboard_mutex);
+            if (session->outgoing_clipboard.size() < 16) {
+              session->outgoing_clipboard.push_back(stream_desk::clipboard_message_t {utf8, content_hash, SS_CLIPBOARD_ORIGIN_HOST, flags});
+            }
+          }
+        }
+      }
+    );
     server->map(packetTypes[IDX_PERIODIC_PING], [](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_PERIODIC_PING]"sv;
     });
@@ -1076,6 +1160,28 @@ namespace stream {
       session->mic_receiver->process_packet(payload);
     });
 
+    server->map(SS_COMMIT_TEXT_PTYPE, [](session_t *session, const std::string_view &payload) {
+      if (!(session->permission & crypto::PERM::input_kbd)) {
+        return;
+      }
+      if (auto text = session->commit_text_reassembler.feed(payload)) {
+        input::passthrough_commit_text(session->input, std::move(*text), session->permission);
+      }
+    });
+
+    server->map(SS_CLIPBOARD_EVENT_PTYPE, [&clipboard_watcher](session_t *session, const std::string_view &payload) {
+      if (!(session->permission & crypto::PERM::clipboard_set)) {
+        return;
+      }
+      if (auto msg = session->clipboard_reassembler.feed(payload)) {
+        if (clipboard_watcher) {
+          clipboard_watcher->set_text(msg->text, msg->content_hash);
+        } else {
+          platf::set_clipboard(msg->text);
+        }
+      }
+    });
+
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
       BOOST_LOG(verbose) << "type [IDX_ENCRYPTED]"sv;
 
@@ -1208,6 +1314,17 @@ namespace stream {
 
               send_hdr_mode(session, std::move(hdr_info));
             }
+
+            std::deque<stream_desk::clipboard_message_t> pending_clipboard;
+            {
+              std::lock_guard<std::mutex> qlg(session->outgoing_clipboard_mutex);
+              pending_clipboard.swap(session->outgoing_clipboard);
+            }
+            for (const auto &clip_msg : pending_clipboard) {
+              if (session->control.peer && (session->config.mlFeatureFlags & ML_FF_CLIPBOARD_EVENT)) {
+                send_clipboard_message(session, clip_msg);
+              }
+            }
           }
 
           ++pos;
@@ -1220,8 +1337,10 @@ namespace stream {
         break;
       }
 
-      server->iterate(150ms);
+      server->iterate(50ms);
     }
+
+    clipboard_watcher.reset();
 
     // Let all remaining connections know the server is shutting down
     // reason: graceful termination

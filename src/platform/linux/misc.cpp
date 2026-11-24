@@ -1063,15 +1063,27 @@ std::string get_local_ip_for_gateway() {
     return std::make_unique<linux_high_precision_timer>();
   }
 
+#ifdef SUNSHINE_BUILD_WAYLAND
+  std::string wayland_get_clipboard();
+  bool wayland_set_clipboard(const std::string &content);
+#endif
+
   std::string
   get_clipboard() {
-    // Placeholder
+#ifdef SUNSHINE_BUILD_WAYLAND
+    return wayland_get_clipboard();
+#else
     return "";
+#endif
   }
 
   bool
   set_clipboard(const std::string& content) {
-    // Placeholder
+#ifdef SUNSHINE_BUILD_WAYLAND
+    return wayland_set_clipboard(content);
+#else
+    (void)content;
     return false;
+#endif
   }
 }  // namespace platf

@@ -15,6 +15,7 @@
 #include "inputtino_touch.h"
 #include "src/config.h"
 #include "src/platform/common.h"
+#include "src/stream_desk.h"
 #include "src/utility.h"
 
 using namespace std::literals;
@@ -121,6 +122,14 @@ namespace platf {
 
     if (platf::mic_available()) {
       caps |= platform_caps::mic_input;
+    }
+
+    if (platf::commit_text_available()) {
+      caps |= platform_caps::commit_text;
+    }
+
+    if (platf::clipboard_event_available()) {
+      caps |= platform_caps::clipboard_event;
     }
 
     return caps;

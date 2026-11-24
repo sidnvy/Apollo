@@ -134,6 +134,7 @@ if(WAYLAND_FOUND)
 
     GEN_WAYLAND("${WAYLAND_PROTOCOLS_DIR}" "unstable/xdg-output" xdg-output-unstable-v1)
     GEN_WAYLAND("${WAYLAND_PROTOCOLS_DIR}" "unstable/linux-dmabuf" linux-dmabuf-unstable-v1)
+    GEN_WAYLAND("${WAYLAND_PROTOCOLS_DIR}" "staging/ext-data-control" ext-data-control-v1)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/wlr-protocols" "unstable" wlr-screencopy-unstable-v1)
 
     include_directories(
@@ -146,7 +147,8 @@ if(WAYLAND_FOUND)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/platform/linux/wlgrab.cpp"
             "${CMAKE_SOURCE_DIR}/src/platform/linux/wayland.h"
-            "${CMAKE_SOURCE_DIR}/src/platform/linux/wayland.cpp")
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/wayland.cpp"
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/clipboard_wayland.cpp")
 endif()
 
 # x11
@@ -240,6 +242,7 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/mic_pulse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/commit_text_fcitx.cpp"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
         "${CMAKE_SOURCE_DIR}/third-party/glad/include/EGL/eglplatform.h"

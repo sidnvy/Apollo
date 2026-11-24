@@ -33,6 +33,7 @@
 #include "process.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "stream_desk.h"
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
@@ -913,6 +914,12 @@ namespace nvhttp {
     std::uint32_t stream_desk_caps = 0;
     if (platf::mic_available()) {
       stream_desk_caps |= 0x01U;
+    }
+    if (platf::commit_text_available()) {
+      stream_desk_caps |= 0x02U;
+    }
+    if (platf::clipboard_event_available()) {
+      stream_desk_caps |= 0x04U;
     }
     tree.put("root.StreamDeskCaps", stream_desk_caps);
     tree.put("root.GfeVersion", GFE_VERSION);

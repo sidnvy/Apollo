@@ -25,8 +25,11 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "platform/common.h"
+#include "stream_desk.h"
 #include "thread_pool.h"
 #include "utility.h"
+
+#define STREAM_DESK_COMMIT_TEXT_MAGIC 0x53444354u
 
 // Win32 WHEEL_DELTA constant
 #ifndef WHEEL_DELTA
@@ -1520,10 +1523,21 @@ namespace input {
     }
 
     // Print the final input packet
-    input::print((void *) payload);
+    if (util::endian::little(payload->magic) != STREAM_DESK_COMMIT_TEXT_MAGIC) {
+      input::print((void *) payload);
+    }
 
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
+      case STREAM_DESK_COMMIT_TEXT_MAGIC:
+        if (config::input.keyboard && entry.size() > sizeof(NV_INPUT_HEADER)) {
+          std::string utf8(reinterpret_cast<const char *>(entry.data() + sizeof(NV_INPUT_HEADER)),
+                           entry.size() - sizeof(NV_INPUT_HEADER));
+          if (!platf::commit_text(utf8)) {
+            BOOST_LOG(debug) << "COMMIT_TEXT delivery failed or unavailable; dropping"sv;
+          }
+        }
+        break;
       case MOUSE_MOVE_REL_MAGIC_GEN5:
         passthrough(input, (PNV_REL_MOUSE_MOVE_PACKET) payload);
         break;
@@ -1639,6 +1653,24 @@ namespace input {
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       input->input_queue.push_back(std::move(input_data));
+    }
+    task_pool.push(passthrough_next_message, input);
+  }
+
+  void passthrough_commit_text(std::shared_ptr<input_t> &input, std::string &&utf8, const crypto::PERM &permission) {
+    if (!(permission & crypto::PERM::input_kbd) || utf8.empty()) {
+      return;
+    }
+
+    std::vector<std::uint8_t> entry(sizeof(NV_INPUT_HEADER) + utf8.size());
+    auto *hdr = reinterpret_cast<PNV_INPUT_HEADER>(entry.data());
+    hdr->size = util::endian::big(static_cast<std::uint32_t>(sizeof(hdr->magic) + utf8.size()));
+    hdr->magic = util::endian::little(static_cast<std::uint32_t>(STREAM_DESK_COMMIT_TEXT_MAGIC));
+    std::memcpy(entry.data() + sizeof(NV_INPUT_HEADER), utf8.data(), utf8.size());
+
+    {
+      std::lock_guard<std::mutex> lg(input->input_queue_lock);
+      input->input_queue.push_back(std::move(entry));
     }
     task_pool.push(passthrough_next_message, input);
   }
