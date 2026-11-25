@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -86,7 +87,28 @@ namespace {
     return false;
   }
 
+  void detach_coreaudio_runloop() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+      CFRunLoopRef null_runloop = nullptr;
+      AudioObjectPropertyAddress addr {
+        kAudioHardwarePropertyRunLoop,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+      AudioObjectSetPropertyData(
+        kAudioObjectSystemObject,
+        &addr,
+        0,
+        nullptr,
+        sizeof(null_runloop),
+        &null_runloop
+      );
+    });
+  }
+
   bool find_virtual_mic_output_device(AudioDeviceID &out_id, std::string &out_name) {
+    detach_coreaudio_runloop();
     AudioObjectPropertyAddress devices_addr {
       kAudioHardwarePropertyDevices,
       kAudioObjectPropertyScopeGlobal,
@@ -235,6 +257,7 @@ namespace {
     }
 
     void open_unit() {
+      detach_coreaudio_runloop();
       AudioComponentDescription desc {};
       desc.componentType = kAudioUnitType_Output;
       desc.componentSubType = kAudioUnitSubType_HALOutput;
@@ -342,9 +365,23 @@ namespace {
 namespace platf {
 
   bool mic_available() {
+    static std::mutex cache_mutex;
+    static bool has_cached = false;
+    static bool cached_value = false;
+    static std::chrono::steady_clock::time_point last_checked {};
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    if (has_cached && (now - last_checked) < std::chrono::seconds(5)) {
+      return cached_value;
+    }
+
     AudioDeviceID id = 0;
     std::string name;
-    return find_virtual_mic_output_device(id, name);
+    cached_value = find_virtual_mic_output_device(id, name);
+    last_checked = std::chrono::steady_clock::now();
+    has_cached = true;
+    return cached_value;
   }
 
   std::unique_ptr<mic::sink_t> create_mic_sink() {

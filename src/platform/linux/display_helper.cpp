@@ -11,10 +11,13 @@
 #include <nlohmann/json.hpp>
 #include <poll.h>
 #include <signal.h>
+#include <spawn.h>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 #include "src/logging.h"
 #include "src/stream_desk_display.h"
@@ -62,27 +65,31 @@ namespace {
       return false;
     }
 
-    pid_t pid = ::fork();
-    if (pid < 0) {
+    posix_spawn_file_actions_t actions;
+    if (::posix_spawn_file_actions_init(&actions) != 0) {
       ::close(in_pipe[0]);
       ::close(in_pipe[1]);
       ::close(out_pipe[0]);
       ::close(out_pipe[1]);
       return false;
     }
+    ::posix_spawn_file_actions_adddup2(&actions, in_pipe[0], STDIN_FILENO);
+    ::posix_spawn_file_actions_adddup2(&actions, out_pipe[1], STDOUT_FILENO);
+    ::posix_spawn_file_actions_addclose(&actions, in_pipe[0]);
+    ::posix_spawn_file_actions_addclose(&actions, in_pipe[1]);
+    ::posix_spawn_file_actions_addclose(&actions, out_pipe[0]);
+    ::posix_spawn_file_actions_addclose(&actions, out_pipe[1]);
 
-    if (pid == 0) {
-      // Child: bind pipes cleanly to stdin/stdout; extra CLOEXEC fds close on execv
-      ::dup2(in_pipe[0], STDIN_FILENO);
-      ::dup2(out_pipe[1], STDOUT_FILENO);
+    pid_t pid = -1;
+    char *argv[] = {const_cast<char *>(path.c_str()), nullptr};
+    const int spawn_rc = ::posix_spawn(&pid, path.c_str(), &actions, nullptr, argv, environ);
+    ::posix_spawn_file_actions_destroy(&actions);
+    if (spawn_rc != 0) {
       ::close(in_pipe[0]);
       ::close(in_pipe[1]);
       ::close(out_pipe[0]);
       ::close(out_pipe[1]);
-
-      char *argv[] = {const_cast<char *>(path.c_str()), nullptr};
-      ::execv(path.c_str(), argv);
-      ::_exit(127);
+      return false;
     }
 
     ::close(in_pipe[0]);
