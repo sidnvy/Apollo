@@ -15,6 +15,7 @@
 // platform includes
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#import <AppKit/AppKit.h>
 #include <Foundation/Foundation.h>
 #include <mach-o/dyld.h>
 #include <net/if_dl.h>
@@ -53,6 +54,34 @@ namespace platf {
   // Return whether screen capture is allowed for this process.
   bool is_screen_capture_allowed() {
     return screen_capture_allowed;
+  }
+
+  void init_main_runloop() {
+    @autoreleasepool {
+      NSApplication *app = [NSApplication sharedApplication];
+      [app setActivationPolicy:NSApplicationActivationPolicyProhibited];
+    }
+  }
+
+  void pump_main_runloop(int timeout_ms) {
+    @autoreleasepool {
+      NSApplication *app = [NSApplication sharedApplication];
+      NSDate *until = timeout_ms > 0
+        ? [NSDate dateWithTimeIntervalSinceNow:(double) timeout_ms / 1000.0]
+        : [NSDate distantPast];
+      NSEvent *event = [app nextEventMatchingMask:NSEventMaskAny
+                                        untilDate:until
+                                           inMode:NSDefaultRunLoopMode
+                                          dequeue:YES];
+      while (event != nil) {
+        [app sendEvent:event];
+        event = [app nextEventMatchingMask:NSEventMaskAny
+                                  untilDate:[NSDate distantPast]
+                                     inMode:NSDefaultRunLoopMode
+                                    dequeue:YES];
+      }
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, false);
+    }
   }
 
   std::unique_ptr<deinit_t> init() {

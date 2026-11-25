@@ -27,6 +27,9 @@
   #include "platform/windows/misc.h"
   #include "platform/windows/virtual_display.h"
 #endif
+#ifdef __APPLE__
+  #include "platform/macos/misc.h"
+#endif
 
 #define PROBE_DISPLAY_UUID "38F72B96-B00C-4F21-8B6C-E1BFF1602B0E"
 
@@ -104,10 +107,16 @@ constexpr bool tray_is_enabled = false;
 
 void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
   bool run_loop = false;
+  const bool tray_active = tray_is_enabled && config::sunshine.system_tray;
 
   // Conditions that would require the main thread event loop
 #ifndef _WIN32
   run_loop = tray_is_enabled;  // On Windows, tray runs in separate thread, so no main loop needed for tray
+#endif
+#ifdef __APPLE__
+  // CoreGraphics/AppKit display-reconfiguration notifications require an active
+  // main-thread RunLoop even when the system tray is disabled.
+  run_loop = true;
 #endif
 
   if (!run_loop) {
@@ -115,23 +124,33 @@ void mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) 
     return;
   }
 
+#ifdef __APPLE__
+  if (!tray_active) {
+    platf::init_main_runloop();
+  }
+#endif
+
   // Main thread event loop
   BOOST_LOG(info) << "Starting main loop"sv;
   while (true) {
     if (shutdown_event->peek()) {
       BOOST_LOG(info) << "Shutdown event detected, breaking main loop"sv;
-      if (tray_is_enabled && config::sunshine.system_tray) {
+      if (tray_active) {
         system_tray::end_tray();
       }
       break;
     }
 
-    if (tray_is_enabled) {
+    if (tray_active) {
       system_tray::process_tray_events();
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    } else {
+#ifdef __APPLE__
+      platf::pump_main_runloop(50);
+#else
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#endif
     }
-
-    // Sleep to avoid busy waiting
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 }
 

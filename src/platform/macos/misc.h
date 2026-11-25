@@ -12,6 +12,8 @@
 
 namespace platf {
   bool is_screen_capture_allowed();
+  void init_main_runloop();
+  void pump_main_runloop(int timeout_ms);
 }
 
 namespace dyn {

@@ -47,35 +47,65 @@
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
   self = [super init];
-
-  CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
-  if (mode == NULL) {
-    [self release];
+  if (!self) {
     return nil;
   }
 
   self.displayID = displayID;
   self.pixelFormat = kCVPixelFormatType_32BGRA;
-  self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
-  self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
   self.minFrameDuration = CMTimeMake(1, frameRate);
   self.session = [[AVCaptureSession alloc] init];
   self.videoOutputs = [[NSMapTable alloc] init];
   self.captureCallbacks = [[NSMapTable alloc] init];
   self.captureSignals = [[NSMapTable alloc] init];
 
-  CFRelease(mode);
+  CGDisplayModeRef mode = NULL;
+  AVCaptureScreenInput *screenInput = nil;
+  for (int attempt = 0; attempt < 15; attempt++) {
+    mode = CGDisplayCopyDisplayMode(displayID);
+    if (mode != NULL) {
+      screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
+      if (screenInput != nil) {
+        [screenInput setMinFrameDuration:self.minFrameDuration];
+        if ([self.session canAddInput:screenInput]) {
+          break;
+        }
+        fprintf(stderr, "AVVideo: AVCaptureSession canAddInput failed for display %u (attempt %d/15)\n", displayID, attempt + 1);
+        [screenInput release];
+        screenInput = nil;
+      } else {
+        fprintf(stderr, "AVVideo: AVCaptureScreenInput initWithDisplayID returned nil for display %u (attempt %d/15)\n", displayID, attempt + 1);
+      }
+      CFRelease(mode);
+      mode = NULL;
+    } else {
+      fprintf(stderr, "AVVideo: CGDisplayCopyDisplayMode returned NULL for display %u (attempt %d/15)\n", displayID, attempt + 1);
+    }
 
-  AVCaptureScreenInput *screenInput = [[AVCaptureScreenInput alloc] initWithDisplayID:self.displayID];
-  [screenInput setMinFrameDuration:self.minFrameDuration];
+    if (attempt + 1 < 15) {
+      if ([NSThread isMainThread]) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+      } else {
+        [NSThread sleepForTimeInterval:0.1];
+      }
+    }
+  }
 
-  if ([self.session canAddInput:screenInput]) {
-    [self.session addInput:screenInput];
-  } else {
+  if (mode == NULL || screenInput == nil) {
+    if (mode != NULL) {
+      CFRelease(mode);
+    }
     [screenInput release];
+    [self release];
     return nil;
   }
 
+  self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
+  self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
+  CFRelease(mode);
+
+  [self.session addInput:screenInput];
+  [screenInput release];
   [self.session startRunning];
 
   return self;
