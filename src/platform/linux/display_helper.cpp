@@ -224,7 +224,12 @@ namespace {
         {"virtualDisplay", req_data.virtual_display},
       };
       nlohmann::json resp;
-      if (!invoke_helper_json(path, req, resp, 2000) || !resp.value("ok", false)) {
+      if (!invoke_helper_json(path, req, resp, 15000)) {
+        BOOST_LOG(warning) << "Display helper configure timed out or exited non-zero (" << path << ")";
+        return false;
+      }
+      if (!resp.value("ok", false)) {
+        BOOST_LOG(warning) << "Display helper configure rejected: " << resp.value("error", std::string {"unknown error"});
         return false;
       }
       output_name = resp.value("outputName", std::string {});
@@ -241,7 +246,15 @@ namespace {
         {"action", "revert"},
       };
       nlohmann::json resp;
-      return invoke_helper_json(path, req, resp, 2000) && resp.value("ok", false);
+      if (!invoke_helper_json(path, req, resp, 15000)) {
+        BOOST_LOG(warning) << "Display helper revert timed out or exited non-zero (" << path << ")";
+        return false;
+      }
+      if (!resp.value("ok", false)) {
+        BOOST_LOG(warning) << "Display helper revert rejected: " << resp.value("error", std::string {"unknown error"});
+        return false;
+      }
+      return true;
     }
   };
 
