@@ -68,7 +68,7 @@ jobs:
             -DBOOST_USE_STATIC=ON
 
       - name: Build
-        run: cmake --build build --target sunshine web-ui test_sunshine -j"$(nproc)"
+        run: cmake --build build -j"$(nproc)"
 
       - name: Run unit tests
         run: ./build/tests/test_sunshine --gtest_filter="*StreamDesk*:*Mic*"
@@ -134,7 +134,7 @@ jobs:
             -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --target sunshine web-ui test_sunshine -j"$(nproc)"
+        run: cmake --build build -j"$(nproc)"
 
       - name: Run unit tests
         run: ./build/tests/test_sunshine.exe --gtest_filter="*StreamDesk*:*Mic*"
