@@ -39,6 +39,7 @@
 
 #ifdef _WIN32
   // from_utf8() string conversion function
+  #include "platform/windows/desktop_scale.h"
   #include "platform/windows/misc.h"
   #include "platform/windows/utils.h"
 
@@ -234,6 +235,7 @@ namespace proc {
     }
 
 #ifdef _WIN32
+    _virtual_display_requested = config::video.headless_mode || launch_session->virtual_display || _app.virtual_display;
     if (
       config::video.headless_mode        // Headless mode
       || launch_session->virtual_display // User requested virtual display
@@ -841,6 +843,115 @@ namespace proc {
 
   std::string proc_t::get_running_app_uuid() {
     return _app.uuid;
+  }
+
+#ifdef _WIN32
+  bool proc_t::resize_virtual_display(rtsp_stream::launch_session_t &session) {
+    if (!_launch_session || session.input_only) {
+      return true;
+    }
+    if (rtsp_stream::session_count() != 0 || session.width <= 0 || session.height <= 0) {
+      return false;
+    }
+    const auto physical = display_device::windows_scale::select_output({}, virtual_display ? display_name : std::string {});
+    if (virtual_display && !_virtual_display_requested && !physical.empty()) {
+      // An automatically created fallback yields to a returned physical display.
+      if (!VDISPLAY::removeVirtualDisplay(_launch_session->display_guid)) {
+        return false;
+      }
+      virtual_display = false;
+      _launch_session->virtual_display = false;
+      session.virtual_display = false;
+      display_name = physical;
+      config::video.output_name = display_device::map_display_name(physical);
+      display_device::reset_persistence();
+      return true;
+    }
+    if (!virtual_display && !physical.empty() && !config::video.headless_mode && !session.virtual_display) {
+      return true;
+    }
+    if (vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
+      initVDisplayDriver();
+    }
+    if (vDisplayDriverStatus != VDISPLAY::DRIVER_STATUS::OK) {
+      return false;
+    }
+
+    int fps = session.fps > 0 ? session.fps : 60000;
+    if (fps < 1000) {
+      fps *= 1000;
+    }
+    if (config::video.double_refreshrate) {
+      fps *= 2;
+    }
+    if (virtual_display) {
+      session.virtual_display = true;
+      session.display_guid = _launch_session->display_guid;
+      DEVMODEW current {};
+      current.dmSize = sizeof(current);
+      if (VDISPLAY::getDeviceSettings(platf::from_utf8(display_name).c_str(), current) != 0 &&
+          current.dmPelsWidth == static_cast<DWORD>(session.width) &&
+          current.dmPelsHeight == static_cast<DWORD>(session.height) &&
+          std::abs(static_cast<int>(current.dmDisplayFrequency) * 1000 - fps) < 1100) {
+        return true;
+      }
+      // SudoVDA supplies the custom mode at creation. Replace only our tracked
+      // display between transports, retaining its GUID and Windows identity.
+      if (!VDISPLAY::removeVirtualDisplay(_launch_session->display_guid)) {
+        return false;
+      }
+    } else {
+      auto id = uuid_util::uuid_t::parse(
+        _app.use_app_identity && !_app.per_client_app_identity ? _app.uuid : _launch_session->unique_id
+      );
+      if (_app.use_app_identity && _app.per_client_app_identity) {
+        const auto app_id = uuid_util::uuid_t::parse(_app.uuid);
+        id.b64[0] ^= app_id.b64[0];
+        id.b64[1] ^= app_id.b64[1];
+      }
+      memcpy(&_launch_session->display_guid, &id, sizeof(GUID));
+      _launch_session->virtual_display = true;
+      session.virtual_display = true;
+      session.display_guid = _launch_session->display_guid;
+    }
+
+    uuid_util::uuid_t id;
+    memcpy(&id, &_launch_session->display_guid, sizeof(GUID));
+    const auto uid = id.string();
+    const auto name = _app.use_app_identity ? _app.name : _launch_session->device_name;
+    const auto output = VDISPLAY::createVirtualDisplay(
+      uid.c_str(),
+      name.c_str(),
+      session.width,
+      session.height,
+      fps,
+      _launch_session->display_guid
+    );
+    if (output.empty()) {
+      BOOST_LOG(error) << "Virtual display resume failed; the original GUID remains tracked for cleanup";
+      return false;
+    }
+    virtual_display = true;
+    display_name = platf::to_utf8(output);
+    config::video.output_name = display_device::map_display_name(display_name);
+    if (VDISPLAY::changeDisplaySettings(output.c_str(), session.width, session.height, fps) != ERROR_SUCCESS) {
+      BOOST_LOG(error) << "Virtual display resume mode was not applied";
+      return false;
+    }
+    if (config::video.isolated_virtual_display_option) {
+      VDISPLAY::changeDisplaySettings2(output.c_str(), session.width, session.height, fps, true);
+    }
+    display_device::reset_persistence();
+    return true;
+  }
+#endif
+
+  void proc_t::apply_display_scale(rtsp_stream::launch_session_t &session) const {
+    const auto scale = _app.scale_factor != 100 ? _app.scale_factor : session.scale_factor;
+    if (scale != 100) {
+      session.width = static_cast<int>(session.width * (scale / 100.0)) & ~1;
+      session.height = static_cast<int>(session.height * (scale / 100.0)) & ~1;
+    }
   }
 
   boost::process::environment proc_t::get_env() {

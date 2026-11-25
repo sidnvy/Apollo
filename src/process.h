@@ -135,6 +135,10 @@ namespace proc {
     std::string get_app_image(int app_id);
     std::string get_last_run_app_name();
     std::string get_running_app_uuid();
+    void apply_display_scale(rtsp_stream::launch_session_t &session) const;
+#ifdef _WIN32
+    bool resize_virtual_display(rtsp_stream::launch_session_t &session);
+#endif
     boost::process::v1::environment get_env();
     void resume();
     void pause();
@@ -147,6 +151,9 @@ namespace proc {
     boost::process::v1::environment _env;
 
     std::shared_ptr<rtsp_stream::launch_session_t> _launch_session;
+#ifdef _WIN32
+    bool _virtual_display_requested {false};
+#endif
     std::shared_ptr<config::input_t> _saved_input_config;
 
     std::vector<ctx_t> _apps;

@@ -159,3 +159,20 @@ TEST(StreamDeskDisplayTest, LinuxHelperRunnerTimeoutKillsAndReapsChild) {
   std::filesystem::remove(helper_path);
 }
 #endif
+
+#ifdef _WIN32
+  #include "src/platform/windows/desktop_scale.h"
+
+TEST(StreamDeskDisplayTest, WindowsScaleInspectReportsValidMonitors) {
+  const auto statuses = display_device::windows_scale::inspect();
+  for (const auto &status : statuses) {
+    EXPECT_FALSE(status.output.empty());
+    if (status.error == 0) {
+      EXPECT_GE(status.current_percent, 100);
+      EXPECT_LE(status.current_percent, 500);
+      EXPECT_GE(status.minimum_percent, 100);
+      EXPECT_GE(status.maximum_percent, status.current_percent);
+    }
+  }
+}
+#endif

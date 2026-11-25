@@ -42,6 +42,7 @@
 #include "zwpad.h"
 
 #ifdef _WIN32
+  #include "platform/windows/desktop_scale.h"
   #include "platform/windows/virtual_display.h"
 #endif
 
@@ -923,6 +924,15 @@ namespace nvhttp {
     if (platf::clipboard_event_available()) {
       stream_desk_caps |= 0x04U;
     }
+#ifdef _WIN32
+    if (config::video.dd.configuration_option != config::video_t::dd_t::config_option_e::disabled &&
+        display_device::windows_scale::supported()) {
+      stream_desk_caps |= 0x08U;
+    }
+    if (proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK) {
+      stream_desk_caps |= 0x10U;
+    }
+#else
     const auto display_caps = stream_desk::display_manager().probe();
     if (display_caps.adaptive_display) {
       stream_desk_caps |= 0x08U;
@@ -930,6 +940,7 @@ namespace nvhttp {
     if (display_caps.virtual_display) {
       stream_desk_caps |= 0x10U;
     }
+#endif
     tree.put("root.StreamDeskCaps", stream_desk_caps);
     tree.put("root.GfeVersion", GFE_VERSION);
     tree.put("root.uniqueid", http::unique_id);
@@ -1312,8 +1323,26 @@ namespace nvhttp {
           launch_session->input_only = true;
         }
 
-        if (no_active_sessions && !proc::proc.virtual_display) {
+        if (no_active_sessions && (!proc::proc.virtual_display
+#ifdef _WIN32
+            || true
+#endif
+        )) {
+#ifdef _WIN32
+          proc::proc.apply_display_scale(*launch_session);
+          if (!proc::proc.resize_virtual_display(*launch_session)) {
+            tree.put("root.resume", 0);
+            tree.put("root.<xmlattr>.status_code", 503);
+            tree.put("root.<xmlattr>.status_message", "Failed to reconfigure the virtual display");
+            return;
+          }
+#endif
           display_device::configure_display(config::video, *launch_session);
+#ifdef _WIN32
+          if (proc::proc.virtual_display) {
+            display_device::reset_persistence();
+          }
+#endif
           if (video::probe_encoders()) {
             tree.put("root.resume", 0);
             tree.put("root.<xmlattr>.status_code", 503);
@@ -1437,11 +1466,29 @@ namespace nvhttp {
       launch_session->input_only = true;
     }
 
-    if (no_active_sessions && !proc::proc.virtual_display) {
+    if (no_active_sessions && (!proc::proc.virtual_display
+#ifdef _WIN32
+        || true
+#endif
+    )) {
+#ifdef _WIN32
+      proc::proc.apply_display_scale(*launch_session);
+      if (!proc::proc.resize_virtual_display(*launch_session)) {
+        tree.put("root.resume", 0);
+        tree.put("root.<xmlattr>.status_code", 503);
+        tree.put("root.<xmlattr>.status_message", "Failed to reconfigure the virtual display");
+        return;
+      }
+#endif
       // We want to prepare display only if there are no active sessions
       // and the current session isn't virtual display at the moment.
       // This should be done before probing encoders as it could change the active displays.
       display_device::configure_display(config::video, *launch_session);
+#ifdef _WIN32
+      if (proc::proc.virtual_display) {
+        display_device::reset_persistence();
+      }
+#endif
 
       // Probe encoders again before streaming to ensure our chosen
       // encoder matches the active GPU (which could have changed

@@ -87,7 +87,13 @@ namespace display_device {
    * configure_display(valid_config);
    * @examples_end
    */
-  void configure_display(const SingleDisplayConfiguration &config);
+  void configure_display(
+    const SingleDisplayConfiguration &config,
+    double desktop_scale = 0.0,
+    unsigned client_width = 0,
+    unsigned client_height = 0,
+    bool remember_scale = true
+  );
 
   /**
    * @brief Revert the display configuration and restore the previous state.

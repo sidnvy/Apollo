@@ -21,8 +21,13 @@
 #include "rtsp.h"
 #include "stream_desk_display.h"
 
+// standard includes
+#include <algorithm>
+
 // platform-specific includes
 #ifdef _WIN32
+  #include "platform/windows/desktop_scale.h"
+  #include "process.h"
   #include <display_device/windows/settings_manager.h>
   #include <display_device/windows/win_api_layer.h>
   #include <display_device/windows/win_display_device.h>
@@ -658,7 +663,12 @@ namespace display_device {
 
       DD_DATA.sm_instance->schedule([try_once = (option == revert_option_e::try_once), tried_out_devices = std::set<std::string> {}](auto &settings_iface, auto &stop_token) mutable {
         if (try_once) {
-          std::ignore = settings_iface.revertSettings();
+          [[maybe_unused]] const auto result = settings_iface.revertSettings();
+#ifdef _WIN32
+          if (result == SettingsManagerInterface::RevertResult::Ok && !windows_scale::restore()) {
+            BOOST_LOG(warning) << "Desktop scale restore pending: " << windows_scale::last_error();
+          }
+#endif
           stop_token.requestStop();
           return;
         }
@@ -686,6 +696,11 @@ namespace display_device {
 
         using enum SettingsManagerInterface::RevertResult;
         if (const auto result {settings_iface.revertSettings()}; result == Ok) {
+#ifdef _WIN32
+          if (!windows_scale::restore()) {
+            BOOST_LOG(warning) << "Desktop scale restore pending: " << windows_scale::last_error();
+          }
+#endif
           stop_token.requestStop();
           return;
         } else if (result == ApiTemporarilyUnavailable) {
@@ -704,6 +719,13 @@ namespace display_device {
 
   std::unique_ptr<platf::deinit_t> init(const std::filesystem::path &persistence_filepath, const config::video_t &video_config) {
     std::lock_guard lock {DD_DATA.mutex};
+#ifdef _WIN32
+    auto scale_path = persistence_filepath;
+    if (!scale_path.empty()) {
+      scale_path += ".desktop-scale";
+    }
+    windows_scale::initialize(scale_path);
+#endif
     // We can support re-init without any issues, however we should make sure to clean up first!
     if (video_config.dd.configuration_option == config::video_t::dd_t::config_option_e::disabled) {
       if (!persistence_filepath.empty() && std::filesystem::exists(persistence_filepath)) {
@@ -800,11 +822,56 @@ namespace display_device {
       return;
     }
 
+#ifdef _WIN32
+    auto effective = video_config;
+    if (session.desktop_scale > 0.0 &&
+        effective.dd.resolution_option == config::video_t::dd_t::resolution_option_e::automatic &&
+        !session.enable_sops) {
+      effective.dd.resolution_option = config::video_t::dd_t::resolution_option_e::disabled;
+    }
+
+    auto result { parse_configuration(effective, session) };
+    if (auto *parsed_config = std::get_if<SingleDisplayConfiguration>(&result)) {
+      if (session.desktop_scale > 0.0 &&
+          video_config.dd.resolution_option == config::video_t::dd_t::resolution_option_e::automatic &&
+          session.width > 0 && session.height > 0) {
+        parsed_config->m_resolution = Resolution {
+          static_cast<unsigned int>(session.width),
+          static_cast<unsigned int>(session.height)
+        };
+      }
+      if (!proc::proc.virtual_display && parsed_config->m_resolution) {
+        const auto output = map_output_name(parsed_config->m_device_id);
+        if (!output.empty()) {
+          if (const auto mode = windows_scale::supported_mode(
+                output,
+                parsed_config->m_resolution->m_width,
+                parsed_config->m_resolution->m_height,
+                session.fps > 0 ? static_cast<unsigned int>(session.fps) : 60000U
+              )) {
+            parsed_config->m_resolution = Resolution {mode->width, mode->height};
+            if (parsed_config->m_refresh_rate) {
+              parsed_config->m_refresh_rate = Rational {mode->millihertz, 1000};
+            }
+          }
+        }
+      }
+      configure_display(
+        *parsed_config,
+        session.desktop_scale,
+        static_cast<unsigned>(std::max(session.width, 0)),
+        static_cast<unsigned>(std::max(session.height, 0)),
+        !proc::proc.virtual_display
+      );
+      return;
+    }
+#else
     const auto result { parse_configuration(video_config, session) };
     if (const auto *parsed_config { std::get_if<SingleDisplayConfiguration>(&result) }; parsed_config) {
       configure_display(*parsed_config);
       return;
     }
+#endif
 
     if (const auto *disabled {std::get_if<configuration_disabled_tag_t>(&result)}; disabled) {
       revert_configuration();
@@ -815,17 +882,57 @@ namespace display_device {
     // want to revert active configuration in case we have any
   }
 
-  void configure_display(const SingleDisplayConfiguration &config) {
+  void configure_display(
+    const SingleDisplayConfiguration &config,
+    double desktop_scale,
+    unsigned client_width,
+    unsigned client_height,
+    bool remember_scale
+  ) {
     std::lock_guard lock {DD_DATA.mutex};
     if (!DD_DATA.sm_instance) {
       // Platform is not supported, nothing to do.
       return;
     }
 
-    DD_DATA.sm_instance->schedule([config](auto &settings_iface, auto &stop_token) {
-      // We only want to keep retrying in case of a transient errors.
-      // In other cases, when we either fail or succeed we just want to stop...
-      if (settings_iface.applySettings(config) != SettingsManagerInterface::ApplyResult::ApiTemporarilyUnavailable) {
+    DD_DATA.sm_instance->schedule([config, desktop_scale, client_width, client_height, remember_scale](auto &settings_iface, auto &stop_token) {
+#ifdef _WIN32
+      const auto output = settings_iface.getDisplayName(config.m_device_id);
+      if (desktop_scale > 0.0 && remember_scale && !output.empty() && !windows_scale::capture_original(output)) {
+        BOOST_LOG(error) << "Cannot preserve desktop scale: " << windows_scale::last_error();
+        stop_token.requestStop();
+        return;
+      }
+#endif
+      const auto result = settings_iface.applySettings(config);
+#ifdef _WIN32
+      if (result == SettingsManagerInterface::ApplyResult::Ok && desktop_scale > 0.0) {
+        const auto active_output = settings_iface.getDisplayName(config.m_device_id);
+        const auto target = active_output.empty() ? output : active_output;
+        double native_scale = desktop_scale;
+        for (const auto &actual : windows_scale::inspect()) {
+          if (actual.output == target && client_width > 0 && client_height > 0) {
+            native_scale *= std::max(
+              static_cast<double>(actual.width) / client_width,
+              static_cast<double>(actual.height) / client_height
+            );
+            break;
+          }
+        }
+        if (!target.empty() && !windows_scale::apply(target, native_scale, false)) {
+          BOOST_LOG(error) << "Desktop scale configuration failed: " << windows_scale::last_error();
+        }
+        for (const auto &actual : windows_scale::inspect()) {
+          if (actual.output == target) {
+            BOOST_LOG(info) << "Session display: output=" << target << " pixels=" << actual.width << 'x' << actual.height
+                            << " desktop-scale=" << (actual.current_percent / 100.0)
+                            << " requested-scale=" << desktop_scale;
+            break;
+          }
+        }
+      }
+#endif
+      if (result != SettingsManagerInterface::ApplyResult::ApiTemporarilyUnavailable) {
         stop_token.requestStop();
       }
     },
