@@ -9,7 +9,9 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 
 // lib includes
 #include <boost/core/noncopyable.hpp>
@@ -268,10 +270,21 @@ namespace platf {
     return "unknown"sv;
   }
 
+  // Optional mapping from capture-local pixels to a compositor's logical desktop.
+  struct absolute_input_transform_t {
+    double offset_x, offset_y;
+    double scale_x, scale_y;
+
+    std::pair<double, double> normalize(double x, double y) const {
+      return {offset_x + x * scale_x, offset_y + y * scale_y};
+    }
+  };
+
   // Dimensions for touchscreen input
   struct touch_port_t {
     int offset_x, offset_y;
     int width, height;
+    std::optional<absolute_input_transform_t> absolute_input_transform;
   };
 
   // These values must match Limelight-internal.h's SS_FF_* constants!
@@ -540,6 +553,7 @@ namespace platf {
     // Offsets for when streaming a specific monitor. By default, they are 0.
     int offset_x, offset_y;
     int env_width, env_height;
+    std::optional<absolute_input_transform_t> absolute_input_transform;
 
     int width, height;
 

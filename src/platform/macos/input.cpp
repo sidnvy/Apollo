@@ -400,25 +400,31 @@ const KeyCodeMap kKeyCodesMap[] = {
     const float x,
     const float y
   ) {
-    const auto display = macos::input_display();
-    const CGRect bounds = CGDisplayBounds(display);
-    const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
-    if (!mode) {
-      return;
+    util::point_t location {};
+    if (touch_port.absolute_input_transform) {
+      const auto point = touch_port.absolute_input_transform->normalize(x, y);
+      location = {point.first, point.second};
+    } else {
+      const auto display = macos::input_display();
+      const CGRect bounds = CGDisplayBounds(display);
+      const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+      if (!mode) {
+        return;
+      }
+
+      const size_t pixel_w = CGDisplayModeGetPixelWidth(mode);
+      const size_t pixel_h = CGDisplayModeGetPixelHeight(mode);
+      CFRelease(mode);
+
+      if (pixel_w == 0 || pixel_h == 0 || bounds.size.width <= 0 || bounds.size.height <= 0) {
+        return;
+      }
+
+      location = {
+        bounds.origin.x + x * (bounds.size.width / static_cast<double>(pixel_w)),
+        bounds.origin.y + y * (bounds.size.height / static_cast<double>(pixel_h))
+      };
     }
-
-    const size_t pixel_w = CGDisplayModeGetPixelWidth(mode);
-    const size_t pixel_h = CGDisplayModeGetPixelHeight(mode);
-    CFRelease(mode);
-
-    if (pixel_w == 0 || pixel_h == 0 || bounds.size.width <= 0 || bounds.size.height <= 0) {
-      return;
-    }
-
-    const util::point_t location {
-      bounds.origin.x + x * (bounds.size.width / static_cast<double>(pixel_w)),
-      bounds.origin.y + y * (bounds.size.height / static_cast<double>(pixel_h))
-    };
 
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, get_mouse_loc(input), 0);
   }

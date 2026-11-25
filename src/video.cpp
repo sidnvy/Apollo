@@ -2080,6 +2080,7 @@ namespace video {
         display->offset_y,
         config.width,
         config.height,
+        display->absolute_input_transform,
       },
       display->env_width,
       display->env_height,

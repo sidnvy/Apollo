@@ -163,6 +163,7 @@ namespace platf {
     // Default to main display
     display->display_id = CGMainDisplayID();
 
+    bool selected_found = display_name.empty();
     // Print all displays available with it's name and id
     auto display_array = [AVVideo displayNames];
     BOOST_LOG(info) << "Detecting displays"sv;
@@ -174,7 +175,12 @@ namespace platf {
       BOOST_LOG(info) << "Detected display: "sv << name.UTF8String << " (id: "sv << [NSString stringWithFormat:@"%@", display_id].UTF8String << ") connected: true"sv;
       if (!display_name.empty() && std::atoi(display_name.c_str()) == [display_id unsignedIntValue]) {
         display->display_id = [display_id unsignedIntValue];
+        selected_found = true;
       }
+    }
+    if (!selected_found) {
+      BOOST_LOG(error) << "Requested macOS capture display is not active: "sv << display_name;
+      return nullptr;
     }
     BOOST_LOG(info) << "Configuring selected display ("sv << display->display_id << ") to stream"sv;
 
@@ -192,6 +198,14 @@ namespace platf {
     display->env_height = display->height;
     macos::captured_display.store(display->display_id, std::memory_order_relaxed);
     const auto bounds = CGDisplayBounds(display->display_id);
+    if (display->width > 0 && display->height > 0 && bounds.size.width > 0 && bounds.size.height > 0) {
+      display->absolute_input_transform = absolute_input_transform_t {
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width / static_cast<double>(display->width),
+        bounds.size.height / static_cast<double>(display->height)
+      };
+    }
     BOOST_LOG(info) << "macOS capture/input geometry: display=" << display->display_id
                     << " pixels=" << display->width << 'x' << display->height
                     << " logical=" << bounds.size.width << 'x' << bounds.size.height

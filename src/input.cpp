@@ -552,7 +552,8 @@ namespace input {
       touch_port.offset_x,
       touch_port.offset_y,
       touch_port.env_width,
-      touch_port.env_height
+      touch_port.env_height,
+      touch_port.absolute_input_transform
     };
 
     platf::abs_mouse(platf_input, abs_port, tpcoords->first, tpcoords->second);
@@ -893,7 +894,8 @@ namespace input {
       touch_port.offset_x,
       touch_port.offset_y,
       touch_port.env_width,
-      touch_port.env_height
+      touch_port.env_height,
+      touch_port.absolute_input_transform
     };
 
     // Renormalize the coordinates
@@ -949,7 +951,8 @@ namespace input {
       touch_port.offset_x,
       touch_port.offset_y,
       touch_port.env_width,
-      touch_port.env_height
+      touch_port.env_height,
+      touch_port.absolute_input_transform
     };
 
     // Renormalize the coordinates
