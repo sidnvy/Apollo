@@ -1,0 +1,377 @@
+name: CI and Release
+
+on:
+  push:
+    branches:
+      - work/main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - work/main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            nodejs \
+            npm \
+            libcap-dev \
+            libcurl4-openssl-dev \
+            libdrm-dev \
+            libevdev-dev \
+            libgbm-dev \
+            libminiupnpc-dev \
+            libnotify-dev \
+            libnuma-dev \
+            libopus-dev \
+            libpulse-dev \
+            libssl-dev \
+            libva-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb-shm0-dev \
+            libxcb-xfixes0-dev \
+            libxcb1-dev \
+            libxfixes-dev \
+            libxrandr-dev \
+            libxtst-dev \
+            udev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=ON \
+            -DSUNSHINE_ENABLE_TRAY=OFF \
+            -DSUNSHINE_ENABLE_CUDA=OFF \
+            -DSUNSHINE_SYSTEM_WAYLAND_PROTOCOLS=OFF \
+            -DSUNSHINE_ASSETS_DIR_DEF=assets \
+            -DBOOST_USE_STATIC=ON
+
+      - name: Build
+        run: cmake --build build --target sunshine web-ui test_sunshine -j"$(nproc)"
+
+      - name: Run unit tests
+        run: ./build/tests/test_sunshine --gtest_filter="*StreamDesk*:*Mic*"
+
+      - name: Package portable tarball
+        run: |
+          mkdir -p dist/stage
+          cp build/sunshine dist/stage/sunshine
+          cp -r build/assets dist/stage/assets
+          cp LICENSE dist/stage/LICENSE
+          tar -czf dist/apollo-linux-x86_64.tar.gz -C dist/stage .
+          rm -rf dist/stage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apollo-linux-x86_64
+          path: dist/apollo-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js (MSVC)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-curl-winssl
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-miniupnpc
+            mingw-w64-ucrt-x86_64-nsis
+            mingw-w64-ucrt-x86_64-onevpl
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-nlohmann-json
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --target sunshine web-ui test_sunshine -j"$(nproc)"
+
+      - name: Run unit tests
+        run: ./build/tests/test_sunshine.exe --gtest_filter="*StreamDesk*:*Mic*"
+
+      - name: Package portable ZIP
+        run: |
+          mkdir -p dist
+          cpack -G ZIP --config build/CPackConfig.cmake -B dist
+          zip_file=$(find dist -maxdepth 1 -name '*.zip' | head -n 1)
+          test -n "$zip_file"
+          mv "$zip_file" dist/apollo-windows-x86_64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apollo-windows-x86_64
+          path: dist/apollo-windows-x86_64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15
+    env:
+      HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERT_P12_BASE64 != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Homebrew dependencies
+        run: brew install cmake ninja pkg-config boost icu4c miniupnpc node openssl@3 opus
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DBUILD_DOCS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DSUNSHINE_ENABLE_TRAY=OFF \
+            -DBOOST_USE_STATIC=OFF \
+            -DSUNSHINE_ASSETS_DIR=../Resources/assets \
+            -DSUNSHINE_ASSETS_DIR_DEF=../Resources/assets \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+
+      - name: Build
+        run: cmake --build build --target sunshine web-ui -j"$(sysctl -n hw.ncpu)"
+
+      - name: Assemble self-contained app bundle
+        run: |
+          APP="dist/Apollo StreamDesk.app"
+          rm -rf dist
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+          cp -f build/sunshine "$APP/Contents/MacOS/Sunshine"
+          chmod +x "$APP/Contents/MacOS/Sunshine"
+          cp -R build/assets "$APP/Contents/Resources/assets"
+          cp apollo.icns "$APP/Contents/Resources/sunshine.icns"
+
+          cat > "$APP/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>CFBundleDisplayName</key>
+          	<string>Apollo StreamDesk</string>
+          	<key>CFBundleExecutable</key>
+          	<string>Sunshine</string>
+          	<key>CFBundleIconFile</key>
+          	<string>sunshine.icns</string>
+          	<key>CFBundleIdentifier</key>
+          	<string>io.github.sidnvy.ApolloStreamDesk</string>
+          	<key>CFBundleName</key>
+          	<string>Apollo StreamDesk</string>
+          	<key>CFBundlePackageType</key>
+          	<string>APPL</string>
+          	<key>CFBundleShortVersionString</key>
+          	<string>1.0.0</string>
+          	<key>CFBundleVersion</key>
+          	<string>1</string>
+          	<key>LSApplicationCategoryType</key>
+          	<string>public.app-category.utilities</string>
+          	<key>LSUIElement</key>
+          	<true/>
+          	<key>NSAudioCaptureUsageDescription</key>
+          	<string>Apollo StreamDesk requires access to system audio to capture and stream audio output.</string>
+          	<key>NSBonjourServices</key>
+          	<array>
+          		<string>_nvstream._tcp</string>
+          	</array>
+          	<key>NSLocalNetworkUsageDescription</key>
+          	<string>Apollo StreamDesk advertises itself on your local network via Bonjour so Moonlight clients can discover this host.</string>
+          	<key>NSMicrophoneUsageDescription</key>
+          	<string>Apollo StreamDesk requires access to your microphone to stream audio.</string>
+          	<key>NSScreenCaptureUsageDescription</key>
+          	<string>Apollo StreamDesk requires access to screen recording to capture and stream your screen content.</string>
+          </dict>
+          </plist>
+          PLIST
+
+          python3 - << 'PY'
+          import os, shutil, subprocess
+          from collections import deque
+
+          app = "dist/Apollo StreamDesk.app"
+          exe = os.path.join(app, "Contents/MacOS/Sunshine")
+          fw_dir = os.path.join(app, "Contents/Frameworks")
+
+          def deps_of(path):
+              out = subprocess.check_output(["otool", "-L", path], text=True)
+              res = []
+              for line in out.splitlines()[1:]:
+                  dep = line.strip().split(" (", 1)[0]
+                  if dep:
+                      res.append(dep)
+              return res
+
+          def resolve_homebrew(dep, parent_dir):
+              if dep.startswith("/opt/homebrew/") and os.path.exists(dep):
+                  return os.path.realpath(dep)
+              if dep.startswith("@loader_path/"):
+                  cand = os.path.join(parent_dir, dep[len("@loader_path/"):])
+                  if os.path.exists(cand):
+                      return os.path.realpath(cand)
+              if dep.startswith("@rpath/"):
+                  name = dep[len("@rpath/"):]
+                  for root in ["/opt/homebrew/opt", "/opt/homebrew/lib"]:
+                      if root.endswith("/lib"):
+                          p = os.path.join(root, name)
+                          if os.path.exists(p):
+                              return os.path.realpath(p)
+              return None
+
+          copied = {}
+          queue = deque([(exe, os.path.dirname(exe))])
+          seen = {exe}
+
+          while queue:
+              target, parent_dir = queue.popleft()
+              for dep in deps_of(target):
+                  base = os.path.basename(dep)
+                  if dep.startswith("/System/") or dep.startswith("/usr/lib/") or target.endswith("/" + base):
+                      continue
+                  real = resolve_homebrew(dep, parent_dir)
+                  if real is None and base in copied:
+                      real = copied[base]
+                  if real and real.startswith("/opt/homebrew/"):
+                      dst = os.path.join(fw_dir, base)
+                      if base not in copied:
+                          shutil.copy2(real, dst)
+                          os.chmod(dst, 0o755)
+                          subprocess.check_call(["install_name_tool", "-id", "@rpath/" + base, dst])
+                          copied[base] = real
+                      if dst not in seen:
+                          seen.add(dst)
+                          queue.append((dst, os.path.dirname(real)))
+
+          for dep in deps_of(exe):
+              base = os.path.basename(dep)
+              if base in copied:
+                  subprocess.check_call(["install_name_tool", "-change", dep, "@executable_path/../Frameworks/" + base, exe])
+
+          for base in copied:
+              dst = os.path.join(fw_dir, base)
+              for dep in deps_of(dst):
+                  dbase = os.path.basename(dep)
+                  if dbase != base and dbase in copied:
+                      subprocess.check_call(["install_name_tool", "-change", dep, "@loader_path/" + dbase, dst])
+
+          for path in [exe] + [os.path.join(fw_dir, b) for b in copied]:
+              leftovers = [d for d in deps_of(path) if "/opt/homebrew/" in d]
+              if leftovers:
+                  raise SystemExit(f"Unrewritten Homebrew refs in {path}: {leftovers}")
+          print(f"Bundled {len(copied)} dylibs with zero /opt/homebrew/ refs")
+          PY
+
+      - name: Import Apple signing certificate
+        if: env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_P12_PASSWORD: ${{ secrets.APPLE_CERT_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN_PASS=$(openssl rand -hex 24)
+          KEYCHAIN_PATH="$RUNNER_TEMP/build-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/cert.p12"
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$P12_PATH"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$APPLE_CERT_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          rm -f "$P12_PATH"
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "BUILD_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign and verify app bundle
+        run: |
+          APP="dist/Apollo StreamDesk.app"
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" --identifier io.github.sidnvy.ApolloStreamDesk "$APP"
+          else
+            codesign --force --deep --sign - --identifier io.github.sidnvy.ApolloStreamDesk "$APP"
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Clean up Apple signing keychain
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cert.p12"
+          if [ -n "${BUILD_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$BUILD_KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+
+      - name: Archive app bundle
+        run: COPYFILE_DISABLE=1 tar -C dist -czf dist/apollo-macos-arm64.tar.gz "Apollo StreamDesk.app"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apollo-macos-arm64
+          path: dist/apollo-macos-arm64.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
