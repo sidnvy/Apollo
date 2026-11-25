@@ -28,6 +28,7 @@ extern "C" {
 namespace {
 
   constexpr std::size_t kMaxBufferedSamples = LI_MIC_SAMPLE_RATE / 5;  // 200ms @ 48kHz mono
+  constexpr UInt32 kOutputChannels = 2;
 
   bool icontains(const std::string &haystack, const std::string &needle) {
     if (needle.empty()) {
@@ -62,10 +63,30 @@ namespace {
     return out;
   }
 
-  bool device_has_output_channels(AudioDeviceID device_id) {
+  void detach_coreaudio_runloop() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+      CFRunLoopRef null_runloop = nullptr;
+      AudioObjectPropertyAddress addr {
+        kAudioHardwarePropertyRunLoop,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+      AudioObjectSetPropertyData(
+        kAudioObjectSystemObject,
+        &addr,
+        0,
+        nullptr,
+        sizeof(null_runloop),
+        &null_runloop
+      );
+    });
+  }
+
+  bool device_has_scope_channels(AudioDeviceID device_id, AudioObjectPropertyScope scope) {
     AudioObjectPropertyAddress addr {
       kAudioDevicePropertyStreamConfiguration,
-      kAudioDevicePropertyScopeOutput,
+      scope,
       kAudioObjectPropertyElementMain
     };
     UInt32 data_size = 0;
@@ -87,27 +108,68 @@ namespace {
     return false;
   }
 
-  void detach_coreaudio_runloop() {
-    static std::once_flag once;
-    std::call_once(once, []() {
-      CFRunLoopRef null_runloop = nullptr;
-      AudioObjectPropertyAddress addr {
-        kAudioHardwarePropertyRunLoop,
-        kAudioObjectPropertyScopeGlobal,
-        kAudioObjectPropertyElementMain
-      };
-      AudioObjectSetPropertyData(
-        kAudioObjectSystemObject,
-        &addr,
-        0,
-        nullptr,
-        sizeof(null_runloop),
-        &null_runloop
-      );
-    });
+  std::string get_device_name(AudioDeviceID dev) {
+    if (dev == kAudioObjectUnknown) {
+      return {};
+    }
+    AudioObjectPropertyAddress name_addr {
+      kAudioDevicePropertyDeviceNameCFString,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain
+    };
+    CFStringRef cf_name = nullptr;
+    UInt32 name_size = sizeof(cf_name);
+    if (AudioObjectGetPropertyData(dev, &name_addr, 0, nullptr, &name_size, &cf_name) != noErr || cf_name == nullptr) {
+      return {};
+    }
+    const std::string name = cfstring_to_utf8(cf_name);
+    CFRelease(cf_name);
+    return name;
   }
 
-  bool find_virtual_mic_output_device(AudioDeviceID &out_id, std::string &out_name) {
+  bool get_default_input_device(AudioDeviceID &out_id) {
+    AudioObjectPropertyAddress addr {
+      kAudioHardwarePropertyDefaultInputDevice,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain
+    };
+    AudioDeviceID dev = kAudioObjectUnknown;
+    UInt32 size = sizeof(dev);
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr, &size, &dev) != noErr ||
+        dev == kAudioObjectUnknown) {
+      return false;
+    }
+    out_id = dev;
+    return true;
+  }
+
+  OSStatus set_default_input_device(AudioDeviceID dev_id) {
+    AudioObjectPropertyAddress addr {
+      kAudioHardwarePropertyDefaultInputDevice,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain
+    };
+    return AudioObjectSetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr, sizeof(dev_id), &dev_id);
+  }
+
+  bool device_is_alive(AudioDeviceID dev_id) {
+    if (dev_id == kAudioObjectUnknown) {
+      return false;
+    }
+    AudioObjectPropertyAddress addr {
+      kAudioDevicePropertyDeviceIsAlive,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain
+    };
+    UInt32 alive = 0;
+    UInt32 size = sizeof(alive);
+    if (AudioObjectGetPropertyData(dev_id, &addr, 0, nullptr, &size, &alive) != noErr || alive == 0) {
+      return false;
+    }
+    return device_has_scope_channels(dev_id, kAudioDevicePropertyScopeInput);
+  }
+
+  bool find_virtual_mic_device(AudioDeviceID &out_id, std::string &out_name) {
     detach_coreaudio_runloop();
     AudioObjectPropertyAddress devices_addr {
       kAudioHardwarePropertyDevices,
@@ -132,24 +194,13 @@ namespace {
     }
 
     for (AudioDeviceID dev : devices) {
-      if (!device_has_output_channels(dev)) {
+      // A loopback virtual microphone must expose both render (output) and capture (input) streams.
+      if (!device_has_scope_channels(dev, kAudioDevicePropertyScopeOutput) ||
+          !device_has_scope_channels(dev, kAudioDevicePropertyScopeInput)) {
         continue;
       }
 
-      AudioObjectPropertyAddress name_addr {
-        kAudioDevicePropertyDeviceNameCFString,
-        kAudioObjectPropertyScopeGlobal,
-        kAudioObjectPropertyElementMain
-      };
-      CFStringRef cf_name = nullptr;
-      UInt32 name_size = sizeof(cf_name);
-      if (AudioObjectGetPropertyData(dev, &name_addr, 0, nullptr, &name_size, &cf_name) != noErr || cf_name == nullptr) {
-        continue;
-      }
-
-      const std::string name = cfstring_to_utf8(cf_name);
-      CFRelease(cf_name);
-
+      const std::string name = get_device_name(dev);
       if (icontains(name, target_needle)) {
         out_id = dev;
         out_name = name;
@@ -200,6 +251,10 @@ namespace {
 
     void close() override {
       AudioComponentInstance unit_to_dispose = nullptr;
+      bool was_started = false;
+      bool restore_needed = false;
+      AudioDeviceID restore_id = kAudioObjectUnknown;
+      std::string restore_name;
       {
         std::lock_guard<std::mutex> ul(unit_mutex_);
         if (closed_) {
@@ -208,19 +263,40 @@ namespace {
         closed_ = true;
         unit_to_dispose = unit_;
         unit_ = nullptr;
+        was_started = started_;
+        started_ = false;
+        restore_needed = switched_default_input_;
+        switched_default_input_ = false;
+        restore_id = previous_default_input_;
+        previous_default_input_ = kAudioObjectUnknown;
+        restore_name = std::move(previous_default_input_name_);
+        previous_default_input_name_.clear();
       }
 
       if (unit_to_dispose != nullptr) {
-        if (started_) {
+        if (was_started) {
           AudioOutputUnitStop(unit_to_dispose);
-          started_ = false;
         }
         AudioUnitUninitialize(unit_to_dispose);
         AudioComponentInstanceDispose(unit_to_dispose);
       }
 
-      std::lock_guard<std::mutex> bl(buf_mutex_);
-      pcm_queue_.clear();
+      {
+        std::lock_guard<std::mutex> bl(buf_mutex_);
+        pcm_queue_.clear();
+      }
+
+      if (restore_needed) {
+        AudioDeviceID cur_id = kAudioObjectUnknown;
+        if (get_default_input_device(cur_id) && cur_id == device_id_ && device_is_alive(restore_id)) {
+          const OSStatus status = set_default_input_device(restore_id);
+          if (status == noErr) {
+            BOOST_LOG(info) << "Restored macOS default input device to [" << restore_name << "]";
+          } else {
+            BOOST_LOG(warning) << "CoreAudio reverse mic failed restoring default input device [" << restore_name << "]: " << status;
+          }
+        }
+      }
     }
 
   private:
@@ -246,13 +322,19 @@ namespace {
       const std::size_t available = self->pcm_queue_.size();
       const std::size_t to_copy = std::min<std::size_t>(inNumberFrames, available);
       for (std::size_t i = 0; i < to_copy; ++i) {
-        dst[i] = self->pcm_queue_.front();
+        const int16_t sample = self->pcm_queue_.front();
         self->pcm_queue_.pop_front();
+        dst[2 * i] = sample;
+        dst[2 * i + 1] = sample;
       }
       if (to_copy < inNumberFrames) {
-        std::memset(dst + to_copy, 0, (inNumberFrames - to_copy) * sizeof(int16_t));
+        std::memset(
+          dst + to_copy * kOutputChannels,
+          0,
+          (inNumberFrames - to_copy) * kOutputChannels * sizeof(int16_t)
+        );
       }
-      ioData->mBuffers[0].mDataByteSize = inNumberFrames * sizeof(int16_t);
+      ioData->mBuffers[0].mDataByteSize = inNumberFrames * kOutputChannels * sizeof(int16_t);
       return noErr;
     }
 
@@ -296,9 +378,9 @@ namespace {
       format.mFormatID = kAudioFormatLinearPCM;
       format.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
       format.mFramesPerPacket = 1;
-      format.mChannelsPerFrame = LI_MIC_CHANNELS;
+      format.mChannelsPerFrame = kOutputChannels;
       format.mBitsPerChannel = 16;
-      format.mBytesPerFrame = format.mChannelsPerFrame * sizeof(int16_t);
+      format.mBytesPerFrame = kOutputChannels * sizeof(int16_t);
       format.mBytesPerPacket = format.mBytesPerFrame;
 
       status = AudioUnitSetProperty(
@@ -348,6 +430,20 @@ namespace {
 
       started_ = true;
       BOOST_LOG(info) << "CoreAudio reverse mic sink active on [" << device_name_ << "]";
+
+      AudioDeviceID prev_id = kAudioObjectUnknown;
+      if (get_default_input_device(prev_id) && prev_id != device_id_) {
+        std::string prev_name = get_device_name(prev_id);
+        const OSStatus switch_status = set_default_input_device(device_id_);
+        if (switch_status == noErr) {
+          previous_default_input_ = prev_id;
+          previous_default_input_name_ = std::move(prev_name);
+          switched_default_input_ = true;
+          BOOST_LOG(info) << "Switched macOS default input device from [" << previous_default_input_name_ << "] to [" << device_name_ << "]";
+        } else {
+          BOOST_LOG(warning) << "CoreAudio reverse mic could not switch default input device to [" << device_name_ << "]: " << switch_status;
+        }
+      }
     }
 
     AudioDeviceID device_id_ {0};
@@ -358,6 +454,9 @@ namespace {
     std::deque<int16_t> pcm_queue_;
     bool started_ {false};
     bool closed_ {false};
+    bool switched_default_input_ {false};
+    AudioDeviceID previous_default_input_ {kAudioObjectUnknown};
+    std::string previous_default_input_name_;
   };
 
 }  // namespace
@@ -378,7 +477,7 @@ namespace platf {
 
     AudioDeviceID id = 0;
     std::string name;
-    cached_value = find_virtual_mic_output_device(id, name);
+    cached_value = find_virtual_mic_device(id, name);
     last_checked = std::chrono::steady_clock::now();
     has_cached = true;
     return cached_value;
@@ -387,7 +486,7 @@ namespace platf {
   std::unique_ptr<mic::sink_t> create_mic_sink() {
     AudioDeviceID id = 0;
     std::string name;
-    if (!find_virtual_mic_output_device(id, name)) {
+    if (!find_virtual_mic_device(id, name)) {
       BOOST_LOG(warning) << "macOS virtual mic device (BlackHole) unavailable; refusing open";
       return nullptr;
     }
