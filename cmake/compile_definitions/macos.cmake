@@ -40,6 +40,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/macos/commit_text_macos.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/display.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/macos/input_geometry.h"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/mic_coreaudio.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/microphone.mm"
         "${CMAKE_SOURCE_DIR}/src/platform/macos/misc.mm"

@@ -8,6 +8,7 @@
 #include "src/platform/common.h"
 #include "src/platform/macos/av_img_t.h"
 #include "src/platform/macos/av_video.h"
+#include "src/platform/macos/input_geometry.h"
 #include "src/platform/macos/misc.h"
 #include "src/platform/macos/nv12_zero_device.h"
 
@@ -189,6 +190,12 @@ namespace platf {
     // We also need set env_width and env_height for absolute mouse coordinates
     display->env_width = display->width;
     display->env_height = display->height;
+    macos::captured_display.store(display->display_id, std::memory_order_relaxed);
+    const auto bounds = CGDisplayBounds(display->display_id);
+    BOOST_LOG(info) << "macOS capture/input geometry: display=" << display->display_id
+                    << " pixels=" << display->width << 'x' << display->height
+                    << " logical=" << bounds.size.width << 'x' << bounds.size.height
+                    << " origin=" << bounds.origin.x << 'x' << bounds.origin.y;
 
     return display;
   }

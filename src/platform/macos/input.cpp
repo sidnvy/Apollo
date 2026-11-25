@@ -18,6 +18,7 @@
 #include "src/input.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/macos/input_geometry.h"
 #include "src/stream_desk.h"
 #include "src/utility.h"
 
@@ -32,8 +33,6 @@ namespace platf {
 
   struct macos_input_t {
   public:
-    CGDirectDisplayID display {};
-    CGFloat displayScaling {};
     CGEventSourceRef source {};
 
     // keyboard related stuff
@@ -258,6 +257,8 @@ const KeyCodeMap kKeyCodesMap[] = {
 
     auto macos_input = ((macos_input_t *) input.get());
     auto event = macos_input->kb_event;
+    // Modifier events also require their own keycode, not the previous key.
+    CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
 
     if (key == kVK_Shift || key == kVK_RightShift ||
         key == kVK_Command || key == kVK_RightCommand ||
@@ -286,12 +287,11 @@ const KeyCodeMap kKeyCodesMap[] = {
 
       macos_input->kb_flags = release ? macos_input->kb_flags & ~mask : macos_input->kb_flags | mask;
       CGEventSetType(event, kCGEventFlagsChanged);
-      CGEventSetFlags(event, macos_input->kb_flags);
     } else {
-      CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
       CGEventSetType(event, release ? kCGEventKeyUp : kCGEventKeyDown);
     }
 
+    CGEventSetFlags(event, macos_input->kb_flags);
     CGEventPost(kCGHIDEventTap, event);
   }
 
@@ -338,17 +338,18 @@ const KeyCodeMap kKeyCodesMap[] = {
     BOOST_LOG(debug) << "mouse_event: "sv << button << ", type: "sv << type << ", location:"sv << raw_location.x << ":"sv << raw_location.y << " click_count: "sv << click_count;
 
     const auto macos_input = static_cast<macos_input_t *>(input.get());
-    const auto display = macos_input->display;
-    const auto event = macos_input->mouse_event;
-
-    // get display bounds for current display
-    const CGRect display_bounds = CGDisplayBounds(display);
+    const CGRect display_bounds = CGDisplayBounds(macos::input_display());
+    if (display_bounds.size.width <= 0 || display_bounds.size.height <= 0) {
+      return;
+    }
 
     // limit mouse to current display bounds
     const auto location = CGPoint {
       std::clamp(raw_location.x, display_bounds.origin.x, display_bounds.origin.x + display_bounds.size.width - 1),
       std::clamp(raw_location.y, display_bounds.origin.y, display_bounds.origin.y + display_bounds.size.height - 1)
     };
+
+    const auto event = macos_input->mouse_event;
 
     CGEventSetType(event, type);
     CGEventSetLocation(event, location);
@@ -399,15 +400,25 @@ const KeyCodeMap kKeyCodesMap[] = {
     const float x,
     const float y
   ) {
-    const auto macos_input = static_cast<macos_input_t *>(input.get());
-    const auto scaling = macos_input->displayScaling;
-    const auto display = macos_input->display;
+    const auto display = macos::input_display();
+    const CGRect bounds = CGDisplayBounds(display);
+    const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+    if (!mode) {
+      return;
+    }
 
-    auto location = util::point_t {x * scaling, y * scaling};
-    CGRect display_bounds = CGDisplayBounds(display);
-    // in order to get the correct mouse location for capturing display , we need to add the display bounds to the location
-    location.x += display_bounds.origin.x;
-    location.y += display_bounds.origin.y;
+    const size_t pixel_w = CGDisplayModeGetPixelWidth(mode);
+    const size_t pixel_h = CGDisplayModeGetPixelHeight(mode);
+    CFRelease(mode);
+
+    if (pixel_w == 0 || pixel_h == 0 || bounds.size.width <= 0 || bounds.size.height <= 0) {
+      return;
+    }
+
+    const util::point_t location {
+      bounds.origin.x + x * (bounds.size.width / static_cast<double>(pixel_w)),
+      bounds.origin.y + y * (bounds.size.height / static_cast<double>(pixel_h))
+    };
 
     post_mouse(input, kCGMouseButtonLeft, event_type_mouse(input), location, get_mouse_loc(input), 0);
   }
@@ -529,32 +540,6 @@ const KeyCodeMap kKeyCodesMap[] = {
 
     const auto macos_input = static_cast<macos_input_t *>(result.get());
 
-    // Default to main display
-    macos_input->display = CGMainDisplayID();
-
-    auto output_name = display_device::map_output_name(config::video.output_name);
-    // If output_name is set, try to find the display with that display id
-    if (!output_name.empty()) {
-      uint32_t max_display = 32;
-      uint32_t display_count;
-      CGDirectDisplayID displays[max_display];
-      if (CGGetActiveDisplayList(max_display, displays, &display_count) != kCGErrorSuccess) {
-        BOOST_LOG(error) << "Unable to get active display list , error: "sv << std::endl;
-      } else {
-        for (int i = 0; i < display_count; i++) {
-          CGDirectDisplayID display_id = displays[i];
-          if (display_id == std::atoi(output_name.c_str())) {
-            macos_input->display = display_id;
-          }
-        }
-      }
-    }
-
-    // Input coordinates are based on the virtual resolution not the physical, so we need the scaling factor
-    const CGDisplayModeRef mode = CGDisplayCopyDisplayMode(macos_input->display);
-    macos_input->displayScaling = ((CGFloat) CGDisplayPixelsWide(macos_input->display)) / ((CGFloat) CGDisplayModeGetPixelWidth(mode));
-    CFRelease(mode);
-
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
     macos_input->kb_event = CGEventCreate(macos_input->source);
@@ -565,7 +550,8 @@ const KeyCodeMap kKeyCodesMap[] = {
     macos_input->mouse_down[1] = false;
     macos_input->mouse_down[2] = false;
 
-    BOOST_LOG(debug) << "Display "sv << macos_input->display << ", pixel dimension: " << CGDisplayPixelsWide(macos_input->display) << "x"sv << CGDisplayPixelsHigh(macos_input->display);
+    BOOST_LOG(info) << "macOS input posting authorization: "sv << CGPreflightPostEventAccess();
+    BOOST_LOG(debug) << "macOS input uses the active capture geometry"sv;
 
     return result;
   }
