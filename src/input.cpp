@@ -53,6 +53,8 @@ namespace input {
   constexpr auto VKEY_MENU = 0x12;
   constexpr auto VKEY_LMENU = 0xA4;
   constexpr auto VKEY_RMENU = 0xA5;
+  constexpr auto VKEY_LWIN = 0x5B;
+  constexpr auto VKEY_RWIN = 0x5C;
 
   enum class button_state_e {
     NONE,  ///< No button state
@@ -675,6 +677,8 @@ namespace input {
       case VKEY_MENU:
       case VKEY_LMENU:
       case VKEY_RMENU:
+      case VKEY_LWIN:
+      case VKEY_RWIN:
         return true;
       default:
         return false;
@@ -759,7 +763,7 @@ namespace input {
           task_pool.cancel(key_press_repeat_id);
         }
 
-        if (config::input.key_repeat_delay.count() > 0) {
+        if (config::input.key_repeat_delay.count() > 0 && !is_modifier(keyCode)) {
           key_press_repeat_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_delay, keyCode, packet->flags, synthetic_modifiers).task_id;
         }
       } else {

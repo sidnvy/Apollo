@@ -6,11 +6,13 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <unordered_set>
 
 // platform includes
 #include <ApplicationServices/ApplicationServices.h>
 #import <Carbon/Carbon.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/hidsystem/IOLLEvent.h>
 #include <mach/mach.h>
 
 // local includes
@@ -36,8 +38,9 @@ namespace platf {
     CGEventSourceRef source {};
 
     // keyboard related stuff
-    CGEventRef kb_event {};
     CGEventFlags kb_flags {};
+    CGEventFlags mod_device_flags {};
+    std::unordered_set<int> pressed_keys {};
 
     // mouse related stuff
     CGEventRef mouse_event {};  // mouse event source
@@ -246,6 +249,62 @@ const KeyCodeMap kKeyCodesMap[] = {
     return temp_map->mac_keycode;
   }
 
+  namespace {
+    constexpr CGEventFlags kTrackedModifierMask =
+      kCGEventFlagMaskShift |
+      kCGEventFlagMaskControl |
+      kCGEventFlagMaskAlternate |
+      kCGEventFlagMaskCommand |
+      NX_DEVICELSHIFTKEYMASK |
+      NX_DEVICERSHIFTKEYMASK |
+      NX_DEVICELCTLKEYMASK |
+      NX_DEVICERCTLKEYMASK |
+      NX_DEVICELALTKEYMASK |
+      NX_DEVICERALTKEYMASK |
+      NX_DEVICELCMDKEYMASK |
+      NX_DEVICERCMDKEYMASK;
+
+    CGEventFlags modifier_device_mask(int key) {
+      switch (key) {
+        case kVK_Shift:
+          return NX_DEVICELSHIFTKEYMASK;
+        case kVK_RightShift:
+          return NX_DEVICERSHIFTKEYMASK;
+        case kVK_Command:
+          return NX_DEVICELCMDKEYMASK;
+        case kVK_RightCommand:
+          return NX_DEVICERCMDKEYMASK;
+        case kVK_Option:
+          return NX_DEVICELALTKEYMASK;
+        case kVK_RightOption:
+          return NX_DEVICERALTKEYMASK;
+        case kVK_Control:
+          return NX_DEVICELCTLKEYMASK;
+        case kVK_RightControl:
+          return NX_DEVICERCTLKEYMASK;
+        default:
+          return 0;
+      }
+    }
+
+    CGEventFlags compute_kb_flags(CGEventFlags device_flags) {
+      CGEventFlags flags = device_flags;
+      if (device_flags & (NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK)) {
+        flags |= kCGEventFlagMaskShift;
+      }
+      if (device_flags & (NX_DEVICELCMDKEYMASK | NX_DEVICERCMDKEYMASK)) {
+        flags |= kCGEventFlagMaskCommand;
+      }
+      if (device_flags & (NX_DEVICELALTKEYMASK | NX_DEVICERALTKEYMASK)) {
+        flags |= kCGEventFlagMaskAlternate;
+      }
+      if (device_flags & (NX_DEVICELCTLKEYMASK | NX_DEVICERCTLKEYMASK)) {
+        flags |= kCGEventFlagMaskControl;
+      }
+      return flags;
+    }
+  }  // namespace
+
   void keyboard_update(input_t &input, uint16_t modcode, bool release, uint8_t flags) {
     auto key = keysym(modcode);
 
@@ -256,43 +315,29 @@ const KeyCodeMap kKeyCodesMap[] = {
     }
 
     auto macos_input = ((macos_input_t *) input.get());
-    auto event = macos_input->kb_event;
-    // Modifier events also require their own keycode, not the previous key.
-    CGEventSetIntegerValueField(event, kCGKeyboardEventKeycode, key);
-
-    if (key == kVK_Shift || key == kVK_RightShift ||
-        key == kVK_Command || key == kVK_RightCommand ||
-        key == kVK_Option || key == kVK_RightOption ||
-        key == kVK_Control || key == kVK_RightControl) {
-      CGEventFlags mask;
-
-      switch (key) {
-        case kVK_Shift:
-        case kVK_RightShift:
-          mask = kCGEventFlagMaskShift;
-          break;
-        case kVK_Command:
-        case kVK_RightCommand:
-          mask = kCGEventFlagMaskCommand;
-          break;
-        case kVK_Option:
-        case kVK_RightOption:
-          mask = kCGEventFlagMaskAlternate;
-          break;
-        case kVK_Control:
-        case kVK_RightControl:
-          mask = kCGEventFlagMaskControl;
-          break;
-      }
-
-      macos_input->kb_flags = release ? macos_input->kb_flags & ~mask : macos_input->kb_flags | mask;
-      CGEventSetType(event, kCGEventFlagsChanged);
-    } else {
-      CGEventSetType(event, release ? kCGEventKeyUp : kCGEventKeyDown);
+    CGEventRef event = CGEventCreateKeyboardEvent(macos_input->source, static_cast<CGKeyCode>(key), !release);
+    if (!event) {
+      return;
     }
 
-    CGEventSetFlags(event, macos_input->kb_flags);
+    if (const CGEventFlags dev_mask = modifier_device_mask(key); dev_mask != 0) {
+      macos_input->mod_device_flags = release
+        ? (macos_input->mod_device_flags & ~dev_mask)
+        : (macos_input->mod_device_flags | dev_mask);
+      macos_input->kb_flags = compute_kb_flags(macos_input->mod_device_flags);
+      CGEventSetType(event, kCGEventFlagsChanged);
+    } else if (!release) {
+      const bool is_repeat = !macos_input->pressed_keys.insert(key).second;
+      CGEventSetIntegerValueField(event, kCGKeyboardEventAutorepeat, is_repeat ? 1 : 0);
+    } else {
+      macos_input->pressed_keys.erase(key);
+    }
+
+    const CGEventFlags existing_flags = CGEventGetFlags(event);
+    const CGEventFlags final_flags = (existing_flags & ~kTrackedModifierMask) | macos_input->kb_flags | kCGEventFlagMaskNonCoalesced;
+    CGEventSetFlags(event, final_flags);
     CGEventPost(kCGHIDEventTap, event);
+    CFRelease(event);
   }
 
   void unicode(input_t &input, char *utf8, int size) {
@@ -361,6 +406,7 @@ const KeyCodeMap kKeyCodesMap[] = {
     const double deltaY = raw_location.y - previous_location.y;
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX);
     CGEventSetDoubleValueField(event, kCGMouseEventDeltaY, deltaY);
+    CGEventSetFlags(event, macos_input->kb_flags);
 
     CGEventPost(kCGHIDEventTap, event);
     // For why this is here, see:
@@ -469,13 +515,18 @@ const KeyCodeMap kKeyCodesMap[] = {
   }
 
   void scroll(input_t &input, const int high_res_distance) {
+    const auto macos_input = static_cast<macos_input_t *>(input.get());
     CGEventRef upEvent = CGEventCreateScrollWheelEvent(
-      nullptr,
+      macos_input->source,
       kCGScrollEventUnitLine,
       2,
       high_res_distance > 0 ? 1 : -1,
       high_res_distance
     );
+    if (!upEvent) {
+      return;
+    }
+    CGEventSetFlags(upEvent, macos_input->kb_flags);
     CGEventPost(kCGHIDEventTap, upEvent);
     CFRelease(upEvent);
   }
@@ -548,8 +599,8 @@ const KeyCodeMap kKeyCodesMap[] = {
 
     macos_input->source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 
-    macos_input->kb_event = CGEventCreate(macos_input->source);
     macos_input->kb_flags = 0;
+    macos_input->mod_device_flags = 0;
 
     macos_input->mouse_event = CGEventCreate(macos_input->source);
     macos_input->mouse_down[0] = false;
@@ -566,7 +617,6 @@ const KeyCodeMap kKeyCodesMap[] = {
     const auto *input = static_cast<macos_input_t *>(p);
 
     CFRelease(input->source);
-    CFRelease(input->kb_event);
     CFRelease(input->mouse_event);
 
     delete input;
